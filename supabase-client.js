@@ -179,6 +179,16 @@
     };
   }
 
+  function mapSaleVoid(row) {
+    return {
+      ...row,
+      createdAt: row.created_at,
+      receivableReduction: Number(row.receivable_reduction || 0),
+      refundAmount: Number(row.refund_amount || 0),
+      refundMethod: row.refund_method || ""
+    };
+  }
+
   function mapCollection(row) {
     return {
       ...row,
@@ -198,10 +208,21 @@
 
   async function loadStore() {
     if (!session) throw new Error("Sign in to load shared store data.");
-    const [products, customers, sales, collections, expenses, settings] = await Promise.all([
+    const [products, customers, sales, voidsResult, collections, expenses, settings] = await Promise.all([
       getAll("products", "name.asc"),
       getAll("customers", "name.asc"),
       getAll("sales", "date.desc,created_at.desc"),
+      getAll("sale_voids", "date.desc,created_at.desc").then(rows => ({
+        rows: rows.map(mapSaleVoid),
+        enabled: true
+      })).catch(error => {
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        if (message.includes("sale_voids") &&
+          (message.includes("schema cache") || message.includes("does not exist") || message.includes("could not find"))) {
+          return { rows: [], enabled: false };
+        }
+        throw error;
+      }),
       getAll("collections", "date.desc,created_at.desc"),
       getAll("expenses", "date.desc,created_at.desc"),
       request("/rest/v1/store_settings?select=id,value")
@@ -212,6 +233,8 @@
       products,
       customers,
       sales: sales.map(mapSale),
+      saleVoids: voidsResult.rows,
+      saleVoidsEnabled: voidsResult.enabled,
       collections: collections.map(mapCollection),
       expenses: expenses.map(mapExpense),
       settings: storeSettings && storeSettings.value && typeof storeSettings.value === "object"
@@ -255,6 +278,27 @@
     });
     if (!row || !row.invoice) throw new Error("Supabase did not confirm the sale.");
     return mapSale(row);
+  }
+
+  async function recordSaleVoid(record) {
+    const row = await request("/rest/v1/rpc/record_sale_void", {
+      method: "POST",
+      body: {
+        p_id: record.id,
+        p_invoice: record.invoice,
+        p_items: record.items.map(item => ({
+          lineIndex: item.lineIndex,
+          productId: item.productId,
+          quantity: item.quantity
+        })),
+        p_reason: record.reason,
+        p_refund_amount: record.refundAmount,
+        p_refund_method: record.refundMethod || null,
+        p_date: record.date
+      }
+    });
+    if (!row || !row.id || !row.invoice) throw new Error("Supabase did not confirm the void and inventory return.");
+    return mapSaleVoid(row);
   }
 
   async function recordCollection(collection) {
@@ -318,6 +362,18 @@
       p_products: snapshot.products,
       p_customers: snapshot.customers,
       p_sales: sales,
+      p_sale_voids: (snapshot.saleVoids || []).map(saleVoid => ({
+        id: saleVoid.id,
+        invoice: saleVoid.invoice,
+        date: saleVoid.date,
+        created_at: saleVoid.createdAt || new Date().toISOString(),
+        items: saleVoid.items,
+        reason: saleVoid.reason,
+        amount: saleVoid.amount,
+        receivable_reduction: saleVoid.receivableReduction || 0,
+        refund_amount: saleVoid.refundAmount || 0,
+        refund_method: saleVoid.refundMethod || null
+      })),
       p_collections: snapshot.collections.map(collection => ({
         id: collection.id,
         date: collection.date,
@@ -367,6 +423,7 @@
     saveProduct,
     createCustomer,
     recordSale,
+    recordSaleVoid,
     recordCollection,
     saveExpense,
     saveSettings,

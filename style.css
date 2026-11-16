@@ -178,6 +178,7 @@ td:first-child { color: #34445a; font-weight: 650; }
 .content-footer span { margin: 0 5px; }
 .notice { border-radius: 7px; font-size: 12px; margin: -10px 0 16px; padding: 11px 13px; }
 .notice-error { background: #fff0ef; color: #a94442; }
+.notice-success { background: #eaf7f0; color: #19875d; line-height: 1.5; }
 
 .register-status { align-items: center; background: #eaf7f0; border-radius: 20px; color: #248159; display: inline-flex; font-size: 10px; font-weight: 650; gap: 7px; padding: 7px 10px; white-space: nowrap; }
 .status-dot { background: #249b68; border-radius: 50%; height: 7px; width: 7px; }
@@ -293,7 +294,11 @@ td:first-child { color: #34445a; font-weight: 650; }
 .report-kpis { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
 .report-kpis .kpi-card { min-height: 112px; }
 .reports-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.report-sales-table { min-width: 500px; }
+.report-sales-table { min-width: 610px; }
+.sale-void-history { color: #bd7624; font-size: 9px; margin-top: 4px; }
+.sale-void-history summary { cursor: pointer; }
+.sale-void-history small { color: #667388; display: block; line-height: 1.4; margin-top: 4px; max-width: 240px; white-space: normal; }
+.sale-void-action { white-space: nowrap; }
 .report-products-table { min-width: 390px; }
 .report-receivables-table { min-width: 320px; }
 .report-inventory-panel { margin-top: 14px; }
@@ -315,6 +320,24 @@ td:first-child { color: #34445a; font-weight: 650; }
 .form-field input, .form-field select { background: #fff; border: 1px solid #dfe5ec; border-radius: 6px; color: #34445a; font: inherit; font-size: 12px; min-height: 38px; min-width: 0; outline: 0; padding: 0 10px; }
 .form-field input:focus, .form-field select:focus { border-color: #7ba8d7; box-shadow: 0 0 0 3px #edf5ff; }
 .form-field input::placeholder { color: #a5aebb; }
+.form-field textarea { background: #fff; border: 1px solid #dfe5ec; border-radius: 6px; color: #34445a; font: inherit; font-size: 12px; min-height: 72px; min-width: 0; outline: 0; padding: 10px; resize: vertical; }
+.form-field textarea:focus { border-color: #7ba8d7; box-shadow: 0 0 0 3px #edf5ff; }
+.form-field textarea::placeholder { color: #a5aebb; }
+.sale-void-items-heading { align-items: center; color: #536176; display: flex; font-size: 11px; justify-content: space-between; margin-bottom: 8px; }
+.sale-void-items { border: 1px solid #edf0f4; border-radius: 7px; max-height: 240px; overflow-y: auto; }
+.sale-void-item { align-items: center; border-bottom: 1px solid #edf0f4; display: flex; gap: 12px; justify-content: space-between; padding: 10px; }
+.sale-void-item:last-child { border-bottom: 0; }
+.sale-void-item > div { display: grid; gap: 4px; min-width: 0; }
+.sale-void-item strong { color: #34445a; font-size: 11px; }
+.sale-void-item small { color: #8994a4; font-size: 9px; }
+.sale-void-quantity { border: 1px solid #dfe5ec; border-radius: 6px; color: #34445a; font: inherit; font-size: 12px; min-height: 36px; text-align: center; width: 90px; }
+.sale-void-summary { background: #f7f9fb; border-radius: 7px; margin-top: 12px; padding: 8px 11px; }
+.sale-void-summary > div { align-items: center; color: #667388; display: flex; font-size: 10px; justify-content: space-between; padding: 6px 0; }
+.sale-void-summary strong { color: #34445a; font-size: 11px; font-variant-numeric: tabular-nums; }
+.sale-void-fields { margin-top: 13px; }
+.sale-void-warning { background: #fff6e8; border-radius: 6px; color: #946323; font-size: 10px; line-height: 1.5; margin: 14px 0 0; padding: 9px 10px; }
+.sale-void-dialog .dialog-actions { align-items: center; flex-wrap: wrap; }
+.sale-void-dialog #submit-sale-void-button:disabled { background: #9eb9d7; }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
 .form-error { background: #fff0ef; border-radius: 6px; color: #a94442; font-size: 11px; line-height: 1.5; margin: -8px 0 14px; padding: 9px 10px; }
 .sale-complete-dialog { border: 0; border-radius: 12px; box-shadow: 0 20px 70px rgba(24, 39, 58, .22); max-width: 390px; padding: 28px; width: calc(100% - 32px); }

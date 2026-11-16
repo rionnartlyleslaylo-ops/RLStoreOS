@@ -7,6 +7,7 @@
     expenses: "rlstoreos.expenses",
     customers: "rlstoreos.customers",
     collections: "rlstoreos.collections",
+    saleVoids: "rlstoreos.sale-voids",
     settings: "rlstoreos.settings"
   };
   const NAV_LABELS = {
@@ -38,8 +39,10 @@
   let cart = [];
   let selectedPayment = "Cash";
   let selectedCustomerId = "";
+  let saleVoidSale = null;
   let activeLedgerCustomerId = "";
   let cloudReadOnly = false;
+  let saleVoidsEnabled = true;
   let cloudUser = null;
   let localMigrationSnapshot = null;
   let localMigrationError = null;
@@ -148,6 +151,7 @@
       products: readProducts(),
       customers: readCustomers(),
       sales: readArray(STORAGE_KEYS.sales),
+      saleVoids: readArray(STORAGE_KEYS.saleVoids),
       collections: readArray(STORAGE_KEYS.collections),
       expenses: readExpenses(),
       settings: readObject(STORAGE_KEYS.settings)
@@ -158,21 +162,24 @@
     localStorage.setItem(STORAGE_KEYS.products, JSON.stringify(store.products));
     localStorage.setItem(STORAGE_KEYS.customers, JSON.stringify(store.customers));
     localStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(store.sales));
+    localStorage.setItem(STORAGE_KEYS.saleVoids, JSON.stringify(store.saleVoids || []));
     localStorage.setItem(STORAGE_KEYS.collections, JSON.stringify(store.collections));
     localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(store.expenses));
     localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(store.settings));
+    saleVoidsEnabled = store.saleVoidsEnabled !== false;
   }
 
   function hasLocalStoreData(store) {
     return Boolean(store && (
       store.products.length || store.customers.length || store.sales.length ||
-      store.collections.length || store.expenses.length || Object.keys(store.settings).length
+      store.saleVoids.length || store.collections.length || store.expenses.length ||
+      Object.keys(store.settings).length
     ));
   }
 
   function isCloudStoreEmpty(store) {
     return !store.products.length && !store.customers.length && !store.sales.length &&
-      !store.collections.length && !store.expenses.length;
+      !(store.saleVoids || []).length && !store.collections.length && !store.expenses.length;
   }
 
   function renderWorkspace() {
@@ -268,7 +275,9 @@
 
     applyCloudStore(store);
     cloudUser = session.user;
-    setCloudStatus("Online · shared data synced", false);
+    setCloudStatus(saleVoidsEnabled
+      ? "Online · shared data synced"
+      : "Online · synced · run the void/return SQL migration to enable returns", false);
     setCloudAuthVisible(false);
     renderWorkspace();
     startCloudRefreshTimer();
@@ -305,7 +314,7 @@
       cloudUser = null;
       cloudReadOnly = false;
       [STORAGE_KEYS.products, STORAGE_KEYS.customers, STORAGE_KEYS.sales,
-        STORAGE_KEYS.collections, STORAGE_KEYS.expenses, STORAGE_KEYS.settings]
+        STORAGE_KEYS.saleVoids, STORAGE_KEYS.collections, STORAGE_KEYS.expenses, STORAGE_KEYS.settings]
         .forEach(key => localStorage.removeItem(key));
       elements.cloudAuthForm.reset();
       setCloudAuthVisible(true);
@@ -320,7 +329,9 @@
   async function refreshCloudWorkspace() {
     const store = await loadCloudStore();
     cloudUser = cloud.getSession() && cloud.getSession().user;
-    setCloudStatus("Online · shared data synced", false);
+    setCloudStatus(saleVoidsEnabled
+      ? "Online · shared data synced"
+      : "Online · synced · run the void/return SQL migration to enable returns", false);
     renderWorkspace();
     return store;
   }
@@ -425,7 +436,28 @@
   }
 
   function lineItems(sale) {
-    return Array.isArray(sale.items) ? sale.items : [];
+    return remainingLineItems(sale, readArray(STORAGE_KEYS.saleVoids));
+  }
+
+  function remainingLineItems(sale, allVoids) {
+    if (!Array.isArray(sale.items)) return [];
+    const voids = allVoids.filter(record => record.invoice === sale.invoice);
+    return sale.items.map((item, lineIndex) => {
+      const voidedQuantity = voids.reduce((sum, record) => sum + (Array.isArray(record.items)
+        ? record.items.reduce((lineSum, voidItem) =>
+          lineSum + (Number(voidItem.lineIndex) === lineIndex ? amount(voidItem.quantity) : 0), 0)
+        : 0), 0);
+      const remainingQuantity = Math.max(0, amount(item.quantity) - voidedQuantity);
+      if (remainingQuantity <= 0) return null;
+      if (voidedQuantity <= 0) return { ...item, originalLineIndex: lineIndex };
+      const price = amount(item.price ?? item.sellingPrice);
+      return {
+        ...item,
+        originalLineIndex: lineIndex,
+        quantity: remainingQuantity,
+        total: roundMoney(price * remainingQuantity)
+      };
+    }).filter(Boolean);
   }
 
   function itemTotal(item) {
@@ -435,8 +467,24 @@
   }
 
   function saleTotal(sale) {
-    if (sale.total !== undefined) return amount(sale.total);
+    if (sale.total !== undefined) {
+      const voids = readArray(STORAGE_KEYS.saleVoids);
+      if (voids.some(record => record.invoice === sale.invoice)) {
+        return roundMoney(lineItems(sale).reduce((sum, item) => sum + itemTotal(item), 0));
+      }
+      return amount(sale.total);
+    }
     return lineItems(sale).reduce((sum, item) => sum + itemTotal(item), 0);
+  }
+
+  function originalSaleTotal(sale) {
+    if (sale.total !== undefined) return amount(sale.total);
+    return (Array.isArray(sale.items) ? sale.items : [])
+      .reduce((sum, item) => sum + itemTotal(item), 0);
+  }
+
+  function saleVoidRecords(sale) {
+    return readArray(STORAGE_KEYS.saleVoids).filter(record => record.invoice === sale.invoice);
   }
 
   function saleCost(sale) {
@@ -465,6 +513,7 @@
     try {
       const products = readArray(STORAGE_KEYS.products);
       const sales = readArray(STORAGE_KEYS.sales);
+      const saleVoids = readArray(STORAGE_KEYS.saleVoids);
       const expenses = readArray(STORAGE_KEYS.expenses);
       const customers = readArray(STORAGE_KEYS.customers);
       const collections = readArray(STORAGE_KEYS.collections);
@@ -475,13 +524,18 @@
       const salesAmount = todaysSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
       const grossProfit = todaysSales.reduce((sum, sale) => sum + saleTotal(sale) - saleCost(sale), 0);
       const expenseAmount = todaysExpenses.reduce((sum, expense) => sum + amount(expense.amount), 0);
-      const cashSales = todaysSales.filter(sale => isPayment(sale, "cash")).reduce((sum, sale) => sum + saleTotal(sale), 0);
+      const cashSales = todaysSales.filter(sale => isPayment(sale, "cash"))
+        .reduce((sum, sale) => sum + originalSaleTotal(sale), 0);
       const cashExpenses = todaysExpenses.filter(expense => String(expense.paymentSource || expense.payment || "").toLowerCase() === "cash")
         .reduce((sum, expense) => sum + amount(expense.amount), 0);
       const cashCollections = collections
         .filter(collection => String(collection.date || "").slice(0, 10) === today &&
           String(collection.paymentSource || "Cash").toLowerCase() === "cash")
         .reduce((sum, collection) => sum + amount(collection.amount), 0);
+      const cashRefunds = saleVoids
+        .filter(record => String(record.date || "").slice(0, 10) === today &&
+          String(record.refundMethod || "").toLowerCase() === "cash")
+        .reduce((sum, record) => sum + amount(record.refundAmount), 0);
       const openingCash = amount(settings.openingCash);
       const inventoryValue = products.reduce((sum, product) => sum + amount(product.stock) * amount(product.cost), 0);
       const creditSales = todaysSales.filter(sale => isPayment(sale, "credit")).reduce((sum, sale) => sum + saleTotal(sale), 0);
@@ -490,7 +544,7 @@
       const creditBalance = sales.filter(sale => isPayment(sale, "credit")).reduce((sum, sale) => sum + saleTotal(sale), 0) - collectionsTotal;
       const hasCustomerBalances = customers.some(customer => customer.balance !== undefined);
       const receivables = hasCustomerBalances ? customerBalances : Math.max(0, creditBalance);
-      const expectedCash = openingCash + cashSales + cashCollections - cashExpenses;
+      const expectedCash = openingCash + cashSales + cashCollections - cashExpenses - cashRefunds;
       const hasUnknownStock = products.some(product => product.stock === null || product.stock === undefined);
 
       setText("sales-today", peso.format(salesAmount));
@@ -507,6 +561,7 @@
       setText("cash-sales", `+ ${peso.format(cashSales)}`);
       setText("cash-collections", `+ ${peso.format(cashCollections)}`);
       setText("cash-expenses", `− ${peso.format(cashExpenses)}`);
+      setText("cash-refunds", `− ${peso.format(cashRefunds)}`);
       setText("expected-cash", peso.format(expectedCash));
       renderSales(todaysSales);
       renderTopProducts(todaysSales);
@@ -1284,8 +1339,19 @@
           createdAt: String(sale.createdAt || ""),
           type: "Credit sale",
           reference: sale.invoice || "—",
-          amount: saleTotal(sale),
+          amount: originalSaleTotal(sale),
           className: "ledger-sale"
+        }));
+      const saleVoids = readArray(STORAGE_KEYS.saleVoids)
+        .filter(record => amount(record.receivableReduction) > 0)
+        .filter(record => sales.some(sale => sale.reference === record.invoice))
+        .map(record => ({
+          date: String(record.date || "").slice(0, 10),
+          createdAt: String(record.createdAt || ""),
+          type: "Sale void",
+          reference: `${record.invoice || "—"} · ${record.reason}`,
+          amount: -amount(record.receivableReduction),
+          className: "ledger-payment"
         }));
       const collections = readArray(STORAGE_KEYS.collections)
         .filter(collection => collection.customerId === customer.id)
@@ -1297,7 +1363,7 @@
           amount: -amount(collection.amount),
           className: "ledger-payment"
         }));
-      const entries = sales.concat(collections).sort((left, right) =>
+      const entries = sales.concat(saleVoids, collections).sort((left, right) =>
         left.date.localeCompare(right.date) || left.createdAt.localeCompare(right.createdAt)
       );
       const activityBalance = entries.reduce((sum, entry) => sum + entry.amount, 0);
@@ -1571,12 +1637,320 @@
       String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
     ).forEach(sale => {
       const row = document.createElement("tr");
-      appendCell(row, sale.invoice || "—");
+      const invoiceCell = document.createElement("td");
+      const invoice = document.createElement("strong");
+      invoice.textContent = sale.invoice || "—";
+      invoiceCell.append(invoice);
+      const voids = saleVoidRecords(sale);
+      if (voids.length) {
+        const history = document.createElement("details");
+        history.className = "sale-void-history";
+        const summary = document.createElement("summary");
+        summary.textContent = lineItems(sale).length ? `Partial return · ${voids.length}` : `Voided · ${voids.length}`;
+        history.append(summary);
+        voids.forEach(record => {
+          const entry = document.createElement("small");
+          const refund = amount(record.refundAmount);
+          const refundDetail = refund > 0
+            ? ` · Refund ${peso.format(refund)} via ${record.refundMethod || "unspecified"}`
+            : "";
+          entry.textContent = `${record.date || ""} · ${record.reason} · ${peso.format(amount(record.amount))} reversed${refundDetail}`;
+          history.append(entry);
+        });
+        invoiceCell.append(history);
+      }
+      row.append(invoiceCell);
       appendCell(row, sale.customer || "Walk-In");
       appendCell(row, sale.payment || "Cash");
       appendCell(row, peso.format(saleTotal(sale)), "align-right");
+      const actionCell = document.createElement("td");
+      const voidButton = document.createElement("button");
+      voidButton.className = "table-action sale-void-action";
+      voidButton.type = "button";
+      voidButton.dataset.saleVoidInvoice = sale.invoice || "";
+      voidButton.textContent = lineItems(sale).length ? "Void / return" : "Voided";
+      voidButton.disabled = !saleVoidsEnabled || lineItems(sale).length === 0;
+      voidButton.title = !saleVoidsEnabled
+        ? "Run the Supabase void/return migration to enable this feature."
+        : lineItems(sale).length ? "Return selected items from this sale." : "All sale items have been voided.";
+      actionCell.append(voidButton);
+      row.append(actionCell);
       body.append(row);
     });
+  }
+
+  function handleSaleReportClick(event) {
+    const button = event.target.closest(".sale-void-action[data-sale-void-invoice]");
+    if (button && !button.disabled) openSaleVoidDialog(button.dataset.saleVoidInvoice);
+  }
+
+  function openSaleVoidDialog(invoice) {
+    elements.reportError.hidden = true;
+    elements.saleVoidNotice.hidden = true;
+    elements.saleVoidError.hidden = true;
+    if (!saleVoidsEnabled) {
+      elements.reportError.textContent = "Sale returns are not enabled yet. Run database/supabase-voids-migration.sql in Supabase, then refresh the app.";
+      elements.reportError.hidden = false;
+      return;
+    }
+    if (!ensureWriteAccess(elements.reportError)) return;
+    try {
+      const sale = readArray(STORAGE_KEYS.sales).find(item => item.invoice === invoice);
+      if (!sale) throw new Error("This sale is no longer available. Refresh shared data and try again.");
+      const availableItems = lineItems(sale);
+      if (!availableItems.length) throw new Error("All items on this sale have already been returned.");
+      if (sale.payment === "Credit" && !readCustomers().some(customer => customer.id === sale.customerId)) {
+        throw new Error("The customer account for this credit sale is unavailable.");
+      }
+      elements.saleVoidForm.reset();
+      elements.saleVoidInvoice.textContent = `${sale.invoice} · ${sale.customer || "Walk-In"} · ${sale.payment || "Cash"}`;
+      elements.saleVoidItems.replaceChildren();
+      saleVoidSale = sale;
+      elements.saleVoidBalanceRow.hidden = sale.payment !== "Credit";
+      elements.saleVoidRefundMethodField.hidden = true;
+      elements.saleVoidRefundMethod.required = false;
+      elements.saleVoidRefundMethod.value = sale.payment === "GCash" ? "GCash" : "Cash";
+      availableItems.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "sale-void-item";
+        const detail = document.createElement("div");
+        const name = document.createElement("strong");
+        name.textContent = item.name || item.productId || "Sale item";
+        const meta = document.createElement("small");
+        meta.textContent = `${quantityFormat.format(item.quantity)} ${item.unit || "PC"} available · ${peso.format(amount(item.price))} each`;
+        detail.append(name, meta);
+        const quantity = document.createElement("input");
+        quantity.className = "sale-void-quantity";
+        quantity.type = "number";
+        quantity.min = "0";
+        quantity.max = String(item.quantity);
+        quantity.step = item.unit === "KG" ? "0.001" : "1";
+        quantity.value = "0";
+        quantity.inputMode = item.unit === "KG" ? "decimal" : "numeric";
+        quantity.dataset.lineIndex = String(item.originalLineIndex);
+        quantity.dataset.productId = item.productId || "";
+        quantity.setAttribute("aria-label", `Quantity of ${name.textContent} to return`);
+        quantity.addEventListener("input", updateSaleVoidPreview);
+        row.append(detail, quantity);
+        elements.saleVoidItems.append(row);
+      });
+      elements.saleVoidReason.value = "";
+      updateSaleVoidPreview();
+      elements.saleVoidDialog.showModal();
+    } catch (error) {
+      elements.reportError.textContent = error instanceof Error ? error.message : "The sale return could not be opened.";
+      elements.reportError.hidden = false;
+    }
+  }
+
+  function getSaleVoidSelection() {
+    const items = [];
+    let valid = true;
+    elements.saleVoidItems.querySelectorAll(".sale-void-quantity").forEach(input => {
+      if (!input.checkValidity()) valid = false;
+      const quantity = Number(input.value);
+      if (quantity > 0) {
+        items.push({
+          lineIndex: Number(input.dataset.lineIndex),
+          productId: input.dataset.productId,
+          quantity
+        });
+      }
+    });
+    return { items, valid };
+  }
+
+  function getSaleVoidPreview(selection) {
+    if (!saleVoidSale || !selection.valid) {
+      return { amount: 0, receivableReduction: 0, refundAmount: 0 };
+    }
+    const originalItems = Array.isArray(saleVoidSale.items) ? saleVoidSale.items : [];
+    const total = roundMoney(selection.items.reduce((sum, selected) => {
+      const item = originalItems[selected.lineIndex];
+      return sum + (item ? roundMoney(amount(item.price ?? item.sellingPrice) * selected.quantity) : 0);
+    }, 0));
+    if (saleVoidSale.payment !== "Credit") {
+      return { amount: total, receivableReduction: 0, refundAmount: total };
+    }
+    const customer = readCustomers().find(item => item.id === saleVoidSale.customerId);
+    const receivableReduction = customer ? Math.min(customer.balance, total) : 0;
+    return {
+      amount: total,
+      receivableReduction: roundMoney(receivableReduction),
+      refundAmount: roundMoney(total - receivableReduction)
+    };
+  }
+
+  function updateSaleVoidPreview() {
+    if (!saleVoidSale) return;
+    const selection = getSaleVoidSelection();
+    const preview = getSaleVoidPreview(selection);
+    elements.saleVoidAmount.textContent = peso.format(preview.amount);
+    elements.saleVoidBalance.textContent = peso.format(preview.receivableReduction);
+    elements.saleVoidRefund.textContent = peso.format(preview.refundAmount);
+    const refundRequired = preview.refundAmount > 0;
+    elements.saleVoidRefundMethodField.hidden = !refundRequired;
+    elements.saleVoidRefundMethod.required = refundRequired;
+    const writeUnavailable = cloudMode && (cloudReadOnly || !navigator.onLine);
+    elements.submitSaleVoidButton.disabled = writeUnavailable || !selection.valid ||
+      selection.items.length === 0 || !elements.saleVoidReason.value.trim() ||
+      (refundRequired && !elements.saleVoidRefundMethod.value);
+  }
+
+  function localSaleVoidRecord(sale, selection, preview, reason, refundMethod) {
+    const previousProducts = localStorage.getItem(STORAGE_KEYS.products);
+    const previousCustomers = sale.payment === "Credit"
+      ? localStorage.getItem(STORAGE_KEYS.customers)
+      : null;
+    const previousSaleVoids = localStorage.getItem(STORAGE_KEYS.saleVoids);
+    const products = readProducts();
+    const customers = sale.payment === "Credit" ? readCustomers() : null;
+    const saleVoids = readArray(STORAGE_KEYS.saleVoids);
+    const currentSale = readArray(STORAGE_KEYS.sales).find(item => item.invoice === sale.invoice);
+    if (!currentSale) throw new Error("This sale is no longer available.");
+    const availableItems = remainingLineItems(currentSale, saleVoids);
+    const availableByIndex = new Map(availableItems.map(item => [item.originalLineIndex, item]));
+    const productById = new Map(products.map(product => [product.id, product]));
+    const customer = customers && customers.find(item => item.id === sale.customerId);
+    let voidAmount = 0;
+    const returnedItems = selection.items.map(selected => {
+      const item = availableByIndex.get(selected.lineIndex);
+      if (!item || item.productId !== selected.productId || selected.quantity > item.quantity) {
+        throw new Error("The sale changed while this return was open. Refresh and review it again.");
+      }
+      const lineTotal = roundMoney(amount(item.price ?? item.sellingPrice) * selected.quantity);
+      voidAmount += lineTotal;
+      const stockRestored = Boolean(item.stockDeducted);
+      if (stockRestored) {
+        const product = productById.get(item.productId);
+        if (!product || product.stock === null) {
+          throw new Error(`Enter the current stock for ${item.name || item.productId} before recording its return.`);
+        }
+        product.stock = roundQuantity(product.stock + selected.quantity);
+      }
+      return {
+        lineIndex: selected.lineIndex,
+        productId: item.productId,
+        name: item.name,
+        unit: item.unit,
+        quantity: selected.quantity,
+        price: amount(item.price ?? item.sellingPrice),
+        cost: amount(item.cost ?? item.unitCost),
+        total: lineTotal,
+        stockRestored
+      };
+    });
+    voidAmount = roundMoney(voidAmount);
+    const receivableReduction = sale.payment === "Credit"
+      ? roundMoney(Math.min(customer ? customer.balance : 0, voidAmount))
+      : 0;
+    const refundAmount = roundMoney(voidAmount - receivableReduction);
+    if (sale.payment === "Credit" && !customer) {
+      throw new Error("The customer account for this credit sale is unavailable.");
+    }
+    if (Math.abs(voidAmount - preview.amount) > 0.001 ||
+      Math.abs(receivableReduction - preview.receivableReduction) > 0.001 ||
+      Math.abs(refundAmount - preview.refundAmount) > 0.001) {
+      throw new Error("The customer balance or sale changed. Refresh shared data and review the return again.");
+    }
+    if (customer) customer.balance = roundMoney(customer.balance - receivableReduction);
+    const record = {
+      id: createSaleVoidId(),
+      invoice: sale.invoice,
+      date: getLocalDateKey(new Date()),
+      createdAt: new Date().toISOString(),
+      reason,
+      items: returnedItems,
+      amount: voidAmount,
+      receivableReduction,
+      refundAmount,
+      refundMethod: refundAmount > 0 ? refundMethod : ""
+    };
+    const updates = [
+      { key: STORAGE_KEYS.products, value: JSON.stringify(products), previous: previousProducts, label: "inventory" },
+      { key: STORAGE_KEYS.saleVoids, value: JSON.stringify([...saleVoids, record]), previous: previousSaleVoids, label: "sale void history" }
+    ];
+    if (customers) {
+      updates.push({
+        key: STORAGE_KEYS.customers,
+        value: JSON.stringify(customers),
+        previous: previousCustomers,
+        label: "customer balance"
+      });
+    }
+    saveLocalTransaction(updates);
+    return record;
+  }
+
+  function createSaleVoidId() {
+    const suffix = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
+    return `VOID-${suffix}`;
+  }
+
+  async function saveSaleVoid(event) {
+    event.preventDefault();
+    elements.saleVoidError.hidden = true;
+    if (!elements.saleVoidForm.reportValidity()) return;
+    if (!ensureWriteAccess(elements.saleVoidError)) return;
+    const selection = getSaleVoidSelection();
+    const preview = getSaleVoidPreview(selection);
+    if (!selection.valid || !selection.items.length) {
+      elements.saleVoidError.textContent = "Choose a valid quantity greater than zero.";
+      elements.saleVoidError.hidden = false;
+      return;
+    }
+    if (!saleVoidSale) {
+      elements.saleVoidError.textContent = "Select a sale before recording a return.";
+      elements.saleVoidError.hidden = false;
+      return;
+    }
+    const refundMethod = preview.refundAmount > 0 ? elements.saleVoidRefundMethod.value : "";
+    if (preview.refundAmount > 0 && !refundMethod) {
+      elements.saleVoidError.textContent = "Choose how the refund was given.";
+      elements.saleVoidError.hidden = false;
+      return;
+    }
+    elements.submitSaleVoidButton.disabled = true;
+    try {
+      const reason = elements.saleVoidReason.value.trim();
+      let record;
+      if (cloudMode) {
+        record = await cloud.recordSaleVoid({
+          id: cloud.makeId("VOID-"),
+          invoice: saleVoidSale.invoice,
+          date: getLocalDateKey(new Date()),
+          items: selection.items,
+          reason,
+          amount: preview.amount,
+          receivableReduction: preview.receivableReduction,
+          refundAmount: preview.refundAmount,
+          refundMethod
+        });
+        cacheCloudRecord(STORAGE_KEYS.saleVoids, record);
+      } else {
+        record = localSaleVoidRecord(saleVoidSale, selection, preview, reason, refundMethod);
+      }
+      elements.saleVoidDialog.close();
+      saleVoidSale = null;
+      elements.reportError.hidden = true;
+      elements.saleVoidNotice.textContent = `Return recorded for ${record.invoice}. Inventory and sales totals were updated. Refund recorded: ${peso.format(amount(record.refundAmount))}.`;
+      elements.saleVoidNotice.hidden = false;
+      if (cloudMode) {
+        await refreshAfterCloudWrite("Sale return");
+      } else {
+        renderDashboard();
+        renderInventory();
+        renderCustomers();
+        renderReports();
+      }
+    } catch (error) {
+      elements.saleVoidError.textContent = `Return could not be recorded: ${error instanceof Error ? error.message : "Unexpected error."}`;
+      elements.saleVoidError.hidden = false;
+    } finally {
+      updateSaleVoidPreview();
+    }
   }
 
   function renderReports() {
@@ -1935,7 +2309,7 @@
     [
       "data-error", "sales-today", "sales-count", "gross-profit", "expenses-today", "net-profit",
       "inventory-value", "cash-on-hand", "credit-sales", "receivables", "opening-cash",
-      "cash-sales", "cash-collections", "cash-expenses", "expected-cash", "sales-table-body", "sales-empty",
+      "cash-sales", "cash-collections", "cash-expenses", "cash-refunds", "expected-cash", "sales-table-body", "sales-empty",
       "top-products", "products-empty", "low-stock-list", "low-stock-count", "stock-empty",
       "dashboard", "placeholder", "menu-toggle", "sidebar-scrim", "page-title",
       "placeholder-title", "placeholder-message", "placeholder-symbol"
@@ -2003,6 +2377,22 @@
     elements.expenseForm = document.getElementById("expense-form");
     elements.expenseFormError = document.getElementById("expense-form-error");
     elements.reportError = document.getElementById("report-error");
+    elements.saleVoidNotice = document.getElementById("sale-void-notice");
+    elements.saleVoidDialog = document.getElementById("sale-void-dialog");
+    elements.saleVoidForm = document.getElementById("sale-void-form");
+    elements.saleVoidError = document.getElementById("sale-void-error");
+    elements.saleVoidInvoice = document.getElementById("sale-void-invoice");
+    elements.saleVoidItems = document.getElementById("sale-void-items");
+    elements.saleVoidAmount = document.getElementById("sale-void-amount");
+    elements.saleVoidBalanceRow = document.getElementById("sale-void-balance-row");
+    elements.saleVoidBalance = document.getElementById("sale-void-balance");
+    elements.saleVoidRefund = document.getElementById("sale-void-refund");
+    elements.saleVoidRefundMethodField = document.getElementById("sale-void-refund-method-field");
+    elements.saleVoidRefundMethod = document.getElementById("sale-void-refund-method");
+    elements.saleVoidReason = elements.saleVoidForm.elements.namedItem("reason");
+    elements.submitSaleVoidButton = document.getElementById("submit-sale-void-button");
+    elements.saleVoidSelectAll = document.getElementById("sale-void-select-all");
+    elements.cashRefunds = document.getElementById("cash-refunds");
     elements.reportDay = document.getElementById("report-day");
     elements.reportMonth = document.getElementById("report-month");
     elements.reportDailySalesBody = document.getElementById("report-daily-sales-body");
@@ -2069,6 +2459,20 @@
     elements.reportMonth.value = today.slice(0, 7);
     elements.reportDay.addEventListener("change", renderReports);
     elements.reportMonth.addEventListener("change", renderReports);
+    elements.reportDailySalesBody.addEventListener("click", handleSaleReportClick);
+    elements.reportMonthlySalesBody.addEventListener("click", handleSaleReportClick);
+    elements.saleVoidForm.addEventListener("submit", saveSaleVoid);
+    elements.saleVoidReason.addEventListener("input", updateSaleVoidPreview);
+    elements.saleVoidRefundMethod.addEventListener("change", updateSaleVoidPreview);
+    elements.saleVoidSelectAll.addEventListener("click", () => {
+      elements.saleVoidItems.querySelectorAll(".sale-void-quantity").forEach(input => {
+        input.value = input.max;
+      });
+      updateSaleVoidPreview();
+    });
+    document.getElementById("close-sale-void-dialog").addEventListener("click", () => elements.saleVoidDialog.close());
+    document.getElementById("cancel-sale-void-button").addEventListener("click", () => elements.saleVoidDialog.close());
+    elements.saleVoidDialog.addEventListener("close", () => { saleVoidSale = null; });
     elements.productResults.addEventListener("click", handleCatalogClick);
     elements.cartItems.addEventListener("click", handleCartClick);
     elements.cartItems.addEventListener("change", handleCartQuantityChange);
