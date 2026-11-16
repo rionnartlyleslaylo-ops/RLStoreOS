@@ -250,6 +250,17 @@
                     <button class="payment-option" type="button" data-payment="GCash" aria-pressed="false">GCash</button>
                     <button class="payment-option" type="button" data-payment="Credit" aria-pressed="false">Credit</button>
                   </div>
+                  <div class="cash-tender-field" id="cash-tender-field">
+                    <label for="cash-received-input">Amount received</label>
+                    <div class="cash-tender-input">
+                      <span aria-hidden="true">₱</span>
+                      <input id="cash-received-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-describedby="cash-change">
+                    </div>
+                    <div class="cash-change-row">
+                      <span>Change due</span>
+                      <strong id="cash-change" aria-live="polite" aria-atomic="true">—</strong>
+                    </div>
+                  </div>
                   <div class="credit-customer-field" id="credit-customer-field" hidden>
                     <label for="credit-customer-select">Charge to customer</label>
                     <select id="credit-customer-select">
@@ -552,6 +563,8 @@
             <div class="completion-details">
               <div><span>Invoice</span><strong id="completed-invoice"></strong></div>
               <div><span>Payment</span><strong id="completed-payment"></strong></div>
+              <div id="completed-cash-row" hidden><span>Cash received</span><strong id="completed-cash"></strong></div>
+              <div id="completed-change-row" hidden><span>Change</span><strong id="completed-change"></strong></div>
               <div id="completed-customer-row" hidden><span>Customer</span><strong id="completed-customer"></strong></div>
               <div class="completion-total"><span>Sale total</span><strong id="completed-total"></strong></div>
             </div>

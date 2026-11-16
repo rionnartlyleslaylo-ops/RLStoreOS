@@ -686,6 +686,10 @@
     return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 
+  function getCartTotal() {
+    return roundMoney(cart.reduce((sum, item) => sum + roundMoney(item.unitPrice * item.quantity), 0));
+  }
+
   function addProductToCart(productId) {
     try {
       const product = readProducts().find(item => item.id === productId);
@@ -719,7 +723,7 @@
     elements.clearCartButton.disabled = cart.length === 0;
     const subtotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
     setText("cart-subtotal", peso.format(subtotal));
-    setText("cart-total", peso.format(subtotal));
+    setText("cart-total", peso.format(getCartTotal()));
     renderPaymentOptions();
     updateCheckoutState();
 
@@ -799,9 +803,27 @@
 
   function updateCheckoutState() {
     const creditSelected = selectedPayment === "Credit";
+    const cashSelected = selectedPayment === "Cash";
     const hasCustomer = Boolean(selectedCustomerId);
     const writeUnavailable = cloudMode && (cloudReadOnly || !navigator.onLine);
-    elements.completeSaleButton.disabled = writeUnavailable || cart.length === 0 || (creditSelected && !hasCustomer);
+    const tenderText = elements.cashReceivedInput.value.trim();
+    const tender = tenderText === "" ? NaN : Number(tenderText);
+    const validTender = Number.isFinite(tender) && tender >= 0 && elements.cashReceivedInput.checkValidity();
+    const total = getCartTotal();
+    const shortfall = validTender ? roundMoney(total - tender) : 0;
+    const underpaid = validTender && shortfall > 0;
+    const invalidTender = cashSelected && tenderText !== "" && !validTender;
+    const changeText = !cashSelected || cart.length === 0 || !validTender
+      ? invalidTender ? "Enter a valid amount" : "—"
+      : underpaid
+        ? `Short ${peso.format(shortfall)}`
+        : peso.format(roundMoney(tender - total));
+    elements.cashTenderField.hidden = !cashSelected || cart.length === 0;
+    elements.cashChange.classList.toggle("is-short", underpaid || invalidTender);
+    elements.cashChange.textContent = changeText;
+    elements.cashReceivedInput.setAttribute("aria-invalid", String(invalidTender || underpaid));
+    elements.completeSaleButton.disabled = writeUnavailable || cart.length === 0 ||
+      (creditSelected && !hasCustomer) || (cashSelected && (!validTender || underpaid));
     elements.creditCustomerField.hidden = !creditSelected;
     elements.paymentHint.hidden = !creditSelected;
     if (creditSelected) {
@@ -844,6 +866,7 @@
       cart = cart.filter(entry => entry.productId !== item.productId);
       if (cart.length === 0) {
         selectedPayment = "Cash";
+        elements.cashReceivedInput.value = "";
         selectedCustomerId = "";
       }
       renderCart();
@@ -883,6 +906,9 @@
     if (!button) return;
     selectedPayment = button.dataset.payment;
     if (selectedPayment !== "Credit") selectedCustomerId = "";
+    if (selectedPayment !== "Cash") {
+      elements.cashReceivedInput.value = "";
+    }
     renderPaymentOptions();
     updateCheckoutState();
     showCartMessage(`${selectedPayment} selected.`);
@@ -901,6 +927,7 @@
     if (cart.length === 0) return;
     cart = [];
     selectedPayment = "Cash";
+    elements.cashReceivedInput.value = "";
     selectedCustomerId = "";
     renderCart();
     showCartMessage("Cart cleared.");
@@ -970,6 +997,18 @@
     }
     if (selectedPayment === "Credit" && !selectedCustomerId) {
       showCartMessage("Select a customer before completing a credit sale.", true);
+      return;
+    }
+    const cashReceivedAmount = selectedPayment === "Cash" ? Number(elements.cashReceivedInput.value) : null;
+    if (selectedPayment === "Cash" && (
+      !elements.cashReceivedInput.value.trim() ||
+      !elements.cashReceivedInput.checkValidity() ||
+      !Number.isFinite(cashReceivedAmount) ||
+      cashReceivedAmount < 0 ||
+      roundMoney(cashReceivedAmount) < getCartTotal()
+    )) {
+      updateCheckoutState();
+      showCartMessage("Enter the amount received. It must cover the sale total.", true);
       return;
     }
     if (!ensureWriteAccess(elements.cartMessage)) return;
@@ -1082,6 +1121,7 @@
 
     cart = [];
     selectedPayment = "Cash";
+    elements.cashReceivedInput.value = "";
     selectedCustomerId = "";
     elements.productSearch.value = "";
     renderCart();
@@ -1092,6 +1132,13 @@
     setText("completed-invoice", sale.invoice);
     setText("completed-payment", sale.payment);
     setText("completed-total", peso.format(sale.total));
+    const cashSale = sale.payment === "Cash";
+    elements.completedCashRow.hidden = !cashSale;
+    elements.completedChangeRow.hidden = !cashSale;
+    if (cashSale) {
+      setText("completed-cash", peso.format(cashReceivedAmount));
+      setText("completed-change", peso.format(roundMoney(cashReceivedAmount - sale.total)));
+    }
     const untrackedProductCount = sale.items.filter(item => !item.stockDeducted).length;
     const completionMessage = untrackedProductCount
       ? `Sale saved. Stock was not deducted for ${untrackedProductCount} untracked ${untrackedProductCount === 1 ? "product" : "products"}. Enter the physical quantity on hand when you count them.`
@@ -1928,6 +1975,9 @@
     elements.cartMessage = document.getElementById("cart-message");
     elements.completeSaleButton = document.getElementById("complete-sale-button");
     elements.paymentHint = document.getElementById("payment-hint");
+    elements.cashTenderField = document.getElementById("cash-tender-field");
+    elements.cashReceivedInput = document.getElementById("cash-received-input");
+    elements.cashChange = document.getElementById("cash-change");
     elements.saleCompleteDialog = document.getElementById("sale-complete-dialog");
     elements.newSaleButton = document.getElementById("new-sale-button");
     elements.creditCustomerField = document.getElementById("credit-customer-field");
@@ -1966,6 +2016,8 @@
     elements.reportInventoryBody = document.getElementById("report-inventory-body");
     elements.reportInventoryEmpty = document.getElementById("report-inventory-empty");
     elements.completedCustomerRow = document.getElementById("completed-customer-row");
+    elements.completedCashRow = document.getElementById("completed-cash-row");
+    elements.completedChangeRow = document.getElementById("completed-change-row");
     elements.cloudAuthForm = document.getElementById("cloud-auth-form");
     elements.cloudAuthScreen = document.getElementById("cloud-auth-screen");
     elements.cloudAuthError = document.getElementById("cloud-auth-error");
@@ -2021,6 +2073,9 @@
     elements.cartItems.addEventListener("click", handleCartClick);
     elements.cartItems.addEventListener("change", handleCartQuantityChange);
     document.querySelector(".payment-options").addEventListener("click", handlePaymentSelection);
+    elements.cashReceivedInput.addEventListener("input", () => {
+      updateCheckoutState();
+    });
     elements.clearCartButton.addEventListener("click", clearCart);
     elements.completeSaleButton.addEventListener("click", completeSale);
     elements.creditCustomerSelect.addEventListener("change", handleCustomerSelection);

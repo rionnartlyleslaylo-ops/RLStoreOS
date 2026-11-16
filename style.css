@@ -243,6 +243,15 @@ td:first-child { color: #34445a; font-weight: 650; }
 .payment-options { display: grid; gap: 7px; grid-template-columns: repeat(3, 1fr); }
 .payment-option { background: #fff; border: 1px solid #e3e8ef; border-radius: 6px; color: #667388; font-size: 10px; min-height: 35px; }
 .payment-option.is-selected { background: #edf5ff; border-color: #bed6f1; color: var(--blue); font-weight: 700; }
+.cash-tender-field { display: grid; gap: 7px; margin-top: 10px; }
+.cash-tender-field > label { color: #667388; font-size: 10px; font-weight: 650; }
+.cash-tender-input { align-items: center; background: #fff; border: 1px solid #e3e8ef; border-radius: 6px; color: #34445a; display: flex; min-height: 38px; }
+.cash-tender-input:focus-within { border-color: #7ba8d7; box-shadow: 0 0 0 3px #edf5ff; }
+.cash-tender-input > span { color: #667388; font-size: 12px; padding-left: 10px; }
+.cash-tender-input input { background: transparent; border: 0; color: inherit; flex: 1; font: inherit; font-size: 12px; min-width: 0; outline: 0; padding: 0 10px; }
+.cash-change-row { align-items: center; color: #667388; display: flex; font-size: 10px; justify-content: space-between; }
+.cash-change-row strong { color: #19875d; font-size: 12px; font-variant-numeric: tabular-nums; }
+.cash-change-row strong.is-short { color: #bd4d45; }
 .credit-customer-field { display: grid; gap: 6px; margin-top: 9px; }
 .credit-customer-field label { color: #667388; font-size: 10px; font-weight: 650; }
 .credit-customer-field select { background: #fff; border: 1px solid #e3e8ef; border-radius: 6px; color: #34445a; font: inherit; font-size: 11px; min-height: 36px; padding: 0 9px; }
