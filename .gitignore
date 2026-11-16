@@ -1,0 +1,2 @@
+# Contains private purchase costs; keep the local copy out of GitHub.
+/database/products.json

@@ -1,0 +1,44 @@
+name: Deploy RL StoreOS to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Prepare public site files
+        run: |
+          mkdir _site
+          cp ./*.html ./*.css ./*.js ./manifest.json _site/
+          cp -R ./assets _site/
+          if grep -R -nE '"cost"[[:space:]]*:[[:space:]]*-?[0-9]' _site --include='*.js' --include='*.json'; then
+            echo "Public site contains literal product cost values." >&2
+            exit 1
+          fi
+      - name: Upload app files
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
