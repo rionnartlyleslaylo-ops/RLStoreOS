@@ -206,9 +206,137 @@
     };
   }
 
+  function mapFundOpening(row) {
+    return {
+      effectiveDate: row.effective_date,
+      cashBalance: Number(row.cash_balance),
+      gcashBalance: Number(row.gcash_balance),
+      revolvingBalance: Number(row.revolving_balance),
+      savingsBalance: Number(row.savings_balance),
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by
+    };
+  }
+
+  function mapFundOpeningHistory(row) {
+    return {
+      id: row.id,
+      effectiveDate: row.effective_date,
+      previousBalances: row.previous_balances,
+      newBalances: row.new_balances,
+      reason: row.reason,
+      changedAt: row.changed_at,
+      changedBy: row.changed_by
+    };
+  }
+
+  function mapFundTransaction(row) {
+    return {
+      id: row.id,
+      reference: row.reference,
+      date: row.transaction_date,
+      type: row.transaction_type,
+      fromAccount: row.from_account || "",
+      toAccount: row.to_account || "",
+      amount: Number(row.amount),
+      description: row.description,
+      relatedReference: row.related_reference || "",
+      createdAt: row.created_at,
+      createdBy: row.created_by
+    };
+  }
+
+  function mapStockPurchase(row) {
+    return {
+      id: row.id,
+      reference: row.reference,
+      date: row.transaction_date,
+      supplier: row.supplier,
+      description: row.description,
+      paymentAccount: row.payment_account,
+      items: Array.isArray(row.items) ? row.items : [],
+      total: Number(row.total),
+      createdAt: row.created_at,
+      createdBy: row.created_by
+    };
+  }
+
+  function mapCashClosing(row) {
+    return {
+      date: row.closing_date,
+      expectedCash: Number(row.expected_cash),
+      actualCash: Number(row.actual_cash),
+      difference: Number(row.difference),
+      breakdown: row.breakdown || {},
+      notes: row.notes || "",
+      createdAt: row.created_at,
+      createdBy: row.created_by,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by
+    };
+  }
+
+  function mapCashClosingHistory(row) {
+    return {
+      id: row.id,
+      date: row.closing_date,
+      previousRecord: row.previous_record,
+      newRecord: row.new_record,
+      changedAt: row.changed_at,
+      changedBy: row.changed_by
+    };
+  }
+
+  function mapGcashClosing(row) {
+    return {
+      date: row.closing_date,
+      expectedGcash: Number(row.expected_balance),
+      actualGcash: Number(row.actual_balance),
+      difference: Number(row.difference),
+      notes: row.notes || "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  function mapGcashClosingHistory(row) {
+    return {
+      id: row.id,
+      date: row.closing_date,
+      previousRecord: row.previous_record,
+      newRecord: row.new_record,
+      changedAt: row.changed_at
+    };
+  }
+
+  async function loadFinanceStore() {
+    const [openings, openingHistory, transactions, purchases, closings, closingHistory,
+      gcashClosings, gcashClosingHistory] = await Promise.all([
+      getAll("fund_openings", "id.asc"),
+      getAll("fund_opening_history", "changed_at.desc"),
+      getAll("fund_transactions", "transaction_date.desc,created_at.desc"),
+      getAll("stock_purchases", "transaction_date.desc,created_at.desc"),
+      getAll("daily_cash_closings", "closing_date.desc"),
+      getAll("daily_cash_closing_history", "changed_at.desc"),
+      getAll("daily_gcash_closings", "closing_date.desc"),
+      getAll("daily_gcash_closing_history", "changed_at.desc")
+    ]);
+    return {
+      enabled: true,
+      opening: openings[0] ? mapFundOpening(openings[0]) : null,
+      openingHistory: openingHistory.map(mapFundOpeningHistory),
+      transactions: transactions.map(mapFundTransaction),
+      purchases: purchases.map(mapStockPurchase),
+      closings: closings.map(mapCashClosing),
+      closingHistory: closingHistory.map(mapCashClosingHistory),
+      gcashClosings: gcashClosings.map(mapGcashClosing),
+      gcashClosingHistory: gcashClosingHistory.map(mapGcashClosingHistory)
+    };
+  }
+
   async function loadStore() {
     if (!session) throw new Error("Sign in to load shared store data.");
-    const [products, customers, sales, voidsResult, collections, expenses, settings] = await Promise.all([
+    const [products, customers, sales, voidsResult, collections, expenses, settings, financeResult] = await Promise.all([
       getAll("products", "name.asc"),
       getAll("customers", "name.asc"),
       getAll("sales", "date.desc,created_at.desc"),
@@ -225,7 +353,21 @@
       }),
       getAll("collections", "date.desc,created_at.desc"),
       getAll("expenses", "date.desc,created_at.desc"),
-      request("/rest/v1/store_settings?select=id,value")
+      request("/rest/v1/store_settings?select=id,value"),
+      loadFinanceStore().catch(error => {
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        if (["fund_openings", "fund_opening_history", "fund_transactions", "stock_purchases",
+          "daily_cash_closings", "daily_cash_closing_history", "daily_gcash_closings",
+          "daily_gcash_closing_history"].some(table => message.includes(table)) &&
+          (message.includes("schema cache") || message.includes("does not exist") || message.includes("could not find"))) {
+          return {
+            enabled: false, opening: null, openingHistory: [], transactions: [],
+            purchases: [], closings: [], closingHistory: [],
+            gcashClosings: [], gcashClosingHistory: []
+          };
+        }
+        throw error;
+      })
     ]);
     if (!Array.isArray(settings)) throw new Error("Supabase returned invalid store settings.");
     const storeSettings = settings.find(item => item.id === "store");
@@ -237,6 +379,15 @@
       saleVoidsEnabled: voidsResult.enabled,
       collections: collections.map(mapCollection),
       expenses: expenses.map(mapExpense),
+      financeEnabled: financeResult.enabled,
+      fundOpening: financeResult.opening,
+      fundOpeningHistory: financeResult.openingHistory,
+      fundTransactions: financeResult.transactions,
+      stockPurchases: financeResult.purchases,
+      cashClosings: financeResult.closings,
+      cashClosingHistory: financeResult.closingHistory,
+      gcashClosings: financeResult.gcashClosings,
+      gcashClosingHistory: financeResult.gcashClosingHistory,
       settings: storeSettings && storeSettings.value && typeof storeSettings.value === "object"
         ? storeSettings.value
         : {}
@@ -321,7 +472,22 @@
     };
   }
 
-  async function saveExpense(expense) {
+  async function saveExpense(expense, enforceFundBalance) {
+    if (enforceFundBalance) {
+      const row = await request("/rest/v1/rpc/record_expense", {
+        method: "POST",
+        body: {
+          p_id: expense.id,
+          p_date: expense.date,
+          p_category: expense.category,
+          p_description: expense.description,
+          p_amount: expense.amount,
+          p_payment_source: expense.paymentSource
+        }
+      });
+      if (!row || !row.id) throw new Error("Supabase did not confirm the expense.");
+      return mapExpense(row);
+    }
     const rows = await request("/rest/v1/expenses", {
       method: "POST",
       headers: { Prefer: "return=representation" },
@@ -339,7 +505,99 @@
     return mapExpense(rows[0]);
   }
 
-  function toDatabaseState(snapshot) {
+  async function setFundOpening(opening, reason) {
+    const row = await request("/rest/v1/rpc/set_fund_opening", {
+      method: "POST",
+      body: {
+        p_effective_date: opening.effectiveDate,
+        p_cash_balance: opening.cashBalance,
+        p_gcash_balance: opening.gcashBalance,
+        p_revolving_balance: opening.revolvingBalance,
+        p_savings_balance: opening.savingsBalance,
+        p_reason: reason
+      }
+    });
+    if (!row || !row.effective_date) throw new Error("Supabase did not confirm the opening balances.");
+    const history = await getAll("fund_opening_history", "changed_at.desc");
+    return {
+      opening: mapFundOpening(row),
+      history: history.map(mapFundOpeningHistory)
+    };
+  }
+
+  async function recordFundTransaction(record) {
+    const row = await request("/rest/v1/rpc/record_fund_transaction", {
+      method: "POST",
+      body: {
+        p_id: record.id,
+        p_reference: record.reference,
+        p_date: record.date,
+        p_type: record.type,
+        p_from_account: record.fromAccount || null,
+        p_to_account: record.toAccount || null,
+        p_amount: record.amount,
+        p_description: record.description
+      }
+    });
+    if (!row || !row.id || !row.reference) throw new Error("Supabase did not confirm the fund transaction.");
+    return mapFundTransaction(row);
+  }
+
+  async function recordStockPurchase(purchase) {
+    const row = await request("/rest/v1/rpc/record_stock_purchase", {
+      method: "POST",
+      body: {
+        p_id: purchase.id,
+        p_reference: purchase.reference,
+        p_date: purchase.date,
+        p_supplier: purchase.supplier,
+        p_description: purchase.description,
+        p_payment_account: purchase.paymentAccount,
+        p_items: purchase.items.map(item => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitCost: item.unitCost
+        }))
+      }
+    });
+    if (!row || !row.id || !row.reference) throw new Error("Supabase did not confirm the stock purchase.");
+    return {
+      purchase: mapStockPurchase(row),
+      transaction: mapFundTransaction({
+        id: row.id,
+        reference: row.reference,
+        transaction_date: row.transaction_date,
+        transaction_type: "stock_purchase",
+        from_account: row.payment_account,
+        to_account: null,
+        amount: row.total,
+        description: row.description,
+        related_reference: row.reference,
+        created_at: row.created_at,
+        created_by: row.created_by
+      })
+    };
+  }
+
+  async function saveDailyCashClosing(date, actualCash, notes) {
+    const row = await request("/rest/v1/rpc/save_daily_cash_closing", {
+      method: "POST",
+      body: { p_date: date, p_actual_cash: actualCash, p_notes: notes }
+    });
+    if (!row || !row.closing_date) throw new Error("Supabase did not confirm the daily cash closing.");
+    return mapCashClosing(row);
+  }
+
+  async function saveDailyGcashClosing(date, actualGcash, notes) {
+    const row = await request("/rest/v1/rpc/save_daily_gcash_closing", {
+      method: "POST",
+      body: { p_date: date, p_actual_balance: actualGcash, p_notes: notes }
+    });
+    if (!row || !row.closing_date) throw new Error("Supabase did not confirm the GCash reconciliation.");
+    return mapGcashClosing(row);
+  }
+
+  function toDatabaseState(snapshot, includeFinance) {
     const sales = snapshot.sales.map(sale => {
       const items = Array.isArray(sale.items) ? sale.items : [];
       const total = sale.total === undefined
@@ -358,7 +616,7 @@
         gross_profit: sale.grossProfit === undefined ? Math.round((total - cost) * 100) / 100 : Number(sale.grossProfit)
       };
     });
-    return {
+    const state = {
       p_products: snapshot.products,
       p_customers: snapshot.customers,
       p_sales: sales,
@@ -395,12 +653,87 @@
       })),
       p_settings: snapshot.settings
     };
+    if (!includeFinance) return state;
+
+    const opening = snapshot.fundOpening;
+    state.p_fund_opening = opening ? {
+      effective_date: opening.effectiveDate || opening.effective_date,
+      cash_balance: opening.cashBalance ?? opening.cash_balance,
+      gcash_balance: opening.gcashBalance ?? opening.gcash_balance,
+      revolving_balance: opening.revolvingBalance ?? opening.revolving_balance,
+      savings_balance: opening.savingsBalance ?? opening.savings_balance,
+      updated_at: opening.updatedAt || opening.updated_at
+    } : null;
+    state.p_fund_opening_history = (snapshot.fundOpeningHistory || []).map(record => ({
+      effective_date: record.effectiveDate || record.effective_date,
+      previous_balances: record.previousBalances || record.previous_balances || null,
+      new_balances: record.newBalances || record.new_balances,
+      reason: record.reason,
+      changed_at: record.changedAt || record.changed_at
+    }));
+    state.p_fund_transactions = (snapshot.fundTransactions || []).map(record => ({
+      id: record.id,
+      reference: record.reference,
+      transaction_date: record.date || record.transactionDate || record.transaction_date,
+      transaction_type: record.type || record.transactionType || record.transaction_type,
+      from_account: record.fromAccount || record.from_account || null,
+      to_account: record.toAccount || record.to_account || null,
+      amount: record.amount,
+      description: record.description,
+      related_reference: record.relatedReference || record.related_reference || null,
+      created_at: record.createdAt || record.created_at
+    }));
+    state.p_stock_purchases = (snapshot.stockPurchases || []).map(record => ({
+      id: record.id,
+      reference: record.reference,
+      transaction_date: record.date || record.transactionDate || record.transaction_date,
+      supplier: record.supplier || "",
+      description: record.description,
+      payment_account: record.paymentAccount || record.payment_account,
+      items: record.items || [],
+      total: record.total,
+      created_at: record.createdAt || record.created_at
+    }));
+    state.p_cash_closings = (snapshot.cashClosings || []).map(record => ({
+      closing_date: record.date || record.closingDate || record.closing_date,
+      expected_cash: record.expectedCash ?? record.expected_cash,
+      actual_cash: record.actualCash ?? record.actual_cash,
+      difference: record.difference,
+      breakdown: record.breakdown || {},
+      notes: record.notes || "",
+      created_at: record.createdAt || record.created_at,
+      updated_at: record.updatedAt || record.updated_at
+    }));
+    state.p_cash_closing_history = (snapshot.cashClosingHistory || []).map(record => ({
+      closing_date: record.date || record.closingDate || record.closing_date,
+      previous_record: record.previousRecord || record.previous_record || null,
+      new_record: record.newRecord || record.new_record,
+      changed_at: record.changedAt || record.changed_at
+    }));
+    state.p_gcash_closings = (snapshot.gcashClosings || []).map(record => ({
+      closing_date: record.date || record.closingDate || record.closing_date,
+      expected_balance: record.expectedGcash ?? record.expectedBalance ??
+        record.expected_gcash ?? record.expected_balance,
+      actual_balance: record.actualGcash ?? record.actualBalance ??
+        record.actual_gcash ?? record.actual_balance,
+      difference: record.difference,
+      notes: record.notes || "",
+      created_at: record.createdAt || record.created_at,
+      updated_at: record.updatedAt || record.updated_at
+    }));
+    state.p_gcash_closing_history = (snapshot.gcashClosingHistory || []).map(record => ({
+      closing_date: record.date || record.closingDate || record.closing_date,
+      previous_record: record.previousRecord || record.previous_record || null,
+      new_record: record.newRecord || record.new_record,
+      changed_at: record.changedAt || record.changed_at
+    }));
+    return state;
   }
 
-  async function importDeviceData(snapshot) {
+  async function importDeviceData(snapshot, includeFinance) {
     await request("/rest/v1/rpc/import_device_data", {
       method: "POST",
-      body: toDatabaseState(snapshot)
+      body: toDatabaseState(snapshot, includeFinance)
     });
   }
 
@@ -426,6 +759,11 @@
     recordSaleVoid,
     recordCollection,
     saveExpense,
+    setFundOpening,
+    recordFundTransaction,
+    recordStockPurchase,
+    saveDailyCashClosing,
+    saveDailyGcashClosing,
     saveSettings,
     importDeviceData
   });

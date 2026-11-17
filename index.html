@@ -50,6 +50,7 @@
         <a class="nav-link" href="#customers" data-view="customers"><span class="nav-icon" aria-hidden="true">♙</span><span>Customers</span></a>
         <a class="nav-link" href="#expenses" data-view="expenses"><span class="nav-icon" aria-hidden="true">↗</span><span>Expenses</span></a>
         <a class="nav-link" href="#reports" data-view="reports"><span class="nav-icon" aria-hidden="true">▥</span><span>Reports</span></a>
+        <a class="nav-link" href="#finance" data-view="finance"><span class="nav-icon" aria-hidden="true">₱</span><span>Cash &amp; Funds</span></a>
       </nav>
 
       <div class="sidebar-footer">
@@ -131,6 +132,31 @@
               <strong class="kpi-value" id="receivables">₱0.00</strong>
               <span class="kpi-caption">Outstanding customer balances</span>
             </article>
+            <article class="kpi-card">
+              <div class="kpi-top"><span>GCash balance</span><span class="kpi-icon icon-blue" aria-hidden="true">G</span></div>
+              <strong class="kpi-value" id="gcash-balance">₱0.00</strong>
+              <span class="kpi-caption">Separate from physical cash</span>
+            </article>
+            <article class="kpi-card">
+              <div class="kpi-top"><span>Revolving fund</span><span class="kpi-icon icon-orange" aria-hidden="true">↻</span></div>
+              <strong class="kpi-value" id="revolving-balance">₱0.00</strong>
+              <span class="kpi-caption">Includes recorded cash drops</span>
+            </article>
+            <article class="kpi-card">
+              <div class="kpi-top"><span>Savings fund</span><span class="kpi-icon icon-purple" aria-hidden="true">▤</span></div>
+              <strong class="kpi-value" id="savings-balance">₱0.00</strong>
+              <span class="kpi-caption">Separate reserve balance</span>
+            </article>
+            <article class="kpi-card">
+              <div class="kpi-top"><span>Collections today</span><span class="kpi-icon icon-green" aria-hidden="true">＋</span></div>
+              <strong class="kpi-value" id="today-collections">₱0.00</strong>
+              <span class="kpi-caption">Payments received, not new sales</span>
+            </article>
+            <article class="kpi-card">
+              <div class="kpi-top"><span>Cash difference today</span><span class="kpi-icon icon-orange" aria-hidden="true">≋</span></div>
+              <strong class="kpi-value" id="today-cash-difference">Not closed</strong>
+              <span class="kpi-caption">Actual count less expected cash</span>
+            </article>
           </section>
 
           <div class="dashboard-grid">
@@ -157,11 +183,15 @@
                 <div><span>Opening cash</span><strong id="opening-cash">₱0.00</strong></div>
                 <div><span>Cash sales</span><strong class="positive" id="cash-sales">+ ₱0.00</strong></div>
                 <div><span>Cash collections</span><strong class="positive" id="cash-collections">+ ₱0.00</strong></div>
+                <div><span>Cash stock purchases</span><strong class="negative" id="cash-stock-purchases">− ₱0.00</strong></div>
                 <div><span>Cash expenses</span><strong class="negative" id="cash-expenses">− ₱0.00</strong></div>
                 <div><span>Cash refunds</span><strong class="negative" id="cash-refunds">− ₱0.00</strong></div>
+                <div><span>Other cash in</span><strong class="positive" id="cash-other-in">+ ₱0.00</strong></div>
+                <div><span>Other cash out</span><strong class="negative" id="cash-other-out">− ₱0.00</strong></div>
+                <div><span>Cash drops</span><strong class="negative" id="cash-drops">− ₱0.00</strong></div>
                 <div class="cash-total"><span>Expected cash</span><strong id="expected-cash">₱0.00</strong></div>
               </div>
-              <p class="cash-note">Enter opening cash in settings when that feature is available.</p>
+              <p class="cash-note">Set and audit opening balances in Cash &amp; Funds.</p>
             </section>
 
             <section class="panel">
@@ -394,12 +424,16 @@
             <div>
               <p class="eyebrow">BUSINESS PERFORMANCE</p>
               <h1 id="reports-heading">Reports<span class="heading-period">.</span></h1>
-              <p class="page-subtitle">Review sales, profit, receivables, and stock from your local records.</p>
+              <p class="page-subtitle">Review sales, profit, receivables, and stock from your saved records.</p>
             </div>
           </div>
           <div class="report-filters panel">
             <label class="form-field"><span>Daily report date</span><input id="report-day" type="date"></label>
             <label class="form-field"><span>Monthly report month</span><input id="report-month" type="month"></label>
+            <div class="report-export-actions">
+              <button class="button button-secondary" id="export-reports-csv" type="button">Export CSV</button>
+              <button class="button button-primary" id="export-reports-excel" type="button" title="Downloads an Excel-compatible XML workbook">Export Excel (.xml)</button>
+            </div>
           </div>
           <div class="notice notice-error" id="report-error" role="alert" hidden></div>
           <div class="notice notice-success sale-void-notice" id="sale-void-notice" role="status" hidden></div>
@@ -451,6 +485,149 @@
             </div>
           </section>
         </section>
+
+        <section class="view finance-view" id="view-finance" aria-labelledby="finance-heading" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">CASH CONTROL</p>
+              <h1 id="finance-heading">Cash &amp; Funds<span class="heading-period">.</span></h1>
+              <p class="page-subtitle">Track physical cash, GCash, revolving funds, savings, purchases, and daily closing.</p>
+            </div>
+            <div class="page-heading-actions">
+              <button class="button button-secondary" id="export-finance-button" type="button">Export CSV</button>
+              <button class="button button-primary" id="set-fund-opening-button" type="button">Opening balances</button>
+            </div>
+          </div>
+          <div class="notice notice-error" id="finance-error" role="alert" hidden></div>
+          <div class="notice notice-error" id="finance-migration-notice" role="status" hidden>
+            Cash &amp; Funds is not enabled for the shared store yet. Run database/finance-management-migration.sql in Supabase SQL Editor, then refresh.
+          </div>
+          <section class="finance-balance-grid" aria-label="Current fund balances">
+            <article class="kpi-card"><div class="kpi-top"><span>Cash on hand</span></div><strong class="kpi-value" id="finance-cash-balance">₱0.00</strong><span class="kpi-caption">Physical store cash</span></article>
+            <article class="kpi-card"><div class="kpi-top"><span>GCash</span></div><strong class="kpi-value" id="finance-gcash-balance">₱0.00</strong><span class="kpi-caption">Separate digital balance</span></article>
+            <article class="kpi-card"><div class="kpi-top"><span>Revolving fund</span></div><strong class="kpi-value" id="finance-revolving-balance">₱0.00</strong><span class="kpi-caption">Receives cash drops</span></article>
+            <article class="kpi-card"><div class="kpi-top"><span>Savings fund</span></div><strong class="kpi-value" id="finance-savings-balance">₱0.00</strong><span class="kpi-caption">Separate from store funds</span></article>
+          </section>
+          <section class="finance-actions panel" aria-label="Fund actions">
+            <button class="button button-secondary" id="cash-in-button" type="button">Cash In</button>
+            <button class="button button-secondary" id="cash-out-button" type="button">Cash Out</button>
+            <button class="button button-secondary" id="cash-drop-button" type="button">Cash Drop</button>
+            <button class="button button-secondary" id="gcash-in-button" type="button">GCash In</button>
+            <button class="button button-secondary" id="gcash-out-button" type="button">GCash Out</button>
+            <button class="button button-secondary" id="fund-transfer-button" type="button">Fund Transfer</button>
+            <button class="button button-secondary" id="stock-purchase-button" type="button">Stock Purchase</button>
+          </section>
+          <section class="panel cash-closing-panel" aria-labelledby="cash-closing-heading">
+            <div class="panel-heading"><div><h2 id="cash-closing-heading">Daily cash closing</h2><p>Compare the calculated cash balance with the physical count.</p></div></div>
+            <form id="cash-closing-form" class="cash-closing-form">
+              <label class="form-field"><span>Closing date</span><input id="cash-closing-date" name="date" type="date" required></label>
+              <div class="cash-closing-expected"><span>Expected cash</span><strong id="cash-closing-expected">₱0.00</strong></div>
+              <div class="cash-closing-expected"><span>Difference</span><strong id="cash-closing-difference">—</strong></div>
+              <label class="form-field"><span>Actual cash counted (₱)</span><input name="actualCash" type="number" min="0" step="0.01" required inputmode="decimal" placeholder="0.00"></label>
+              <label class="form-field cash-closing-notes"><span>Notes</span><input name="notes" maxlength="500" placeholder="Optional notes or explanation"></label>
+              <button class="button button-primary" type="submit">Save daily closing</button>
+            </form>
+            <div class="cash-closing-breakdown" id="cash-closing-breakdown"></div>
+            <div class="table-wrap">
+              <table><thead><tr><th>Date</th><th class="align-right">Expected</th><th class="align-right">Actual</th><th class="align-right">Difference</th><th>Notes</th></tr></thead><tbody id="cash-closing-history-body"></tbody></table>
+              <div class="empty-state" id="cash-closing-history-empty">No daily closings recorded yet.</div>
+            </div>
+          </section>
+          <section class="panel cash-closing-panel" aria-labelledby="gcash-closing-heading">
+            <div class="panel-heading"><div><h2 id="gcash-closing-heading">GCash balance reconciliation</h2><p>Reconcile GCash separately; it never changes physical cash.</p></div></div>
+            <form id="gcash-closing-form" class="cash-closing-form">
+              <label class="form-field"><span>Reconciliation date</span><input id="gcash-closing-date" name="date" type="date" required></label>
+              <div class="cash-closing-expected"><span>Expected GCash</span><strong id="gcash-closing-expected">₱0.00</strong></div>
+              <div class="cash-closing-expected"><span>Difference</span><strong id="gcash-closing-difference">—</strong></div>
+              <label class="form-field"><span>Actual GCash balance (₱)</span><input name="actualGcash" type="number" min="0" step="0.01" required inputmode="decimal" placeholder="0.00"></label>
+              <label class="form-field cash-closing-notes"><span>Notes</span><input name="notes" maxlength="500" placeholder="Optional notes or explanation"></label>
+              <button class="button button-primary" type="submit">Save GCash reconciliation</button>
+            </form>
+            <div class="notice notice-error" id="gcash-closing-error" role="alert" hidden></div>
+            <div class="table-wrap">
+              <table><thead><tr><th>Date</th><th class="align-right">Expected GCash</th><th class="align-right">Actual GCash</th><th class="align-right">Difference</th><th>Notes</th></tr></thead><tbody id="gcash-closing-history-body"></tbody></table>
+              <div class="empty-state" id="gcash-closing-history-empty">No GCash reconciliations recorded yet.</div>
+            </div>
+          </section>
+          <section class="panel finance-transactions-panel">
+            <div class="panel-heading"><div><h2>Cash and fund history</h2><p>Other cash movement, drops, transfers, and stock purchases.</p></div></div>
+            <div class="table-wrap">
+              <table><thead><tr><th>Date</th><th>Reference</th><th>Type</th><th>From</th><th>To</th><th>Description</th><th class="align-right">Amount</th></tr></thead><tbody id="fund-transactions-body"></tbody></table>
+              <div class="empty-state" id="fund-transactions-empty">No fund transactions recorded yet.</div>
+            </div>
+          </section>
+          <section class="panel finance-transactions-panel">
+            <div class="panel-heading"><div><h2>Stock purchase history</h2><p>Stock purchases increase inventory and are not operating expenses.</p></div></div>
+            <div class="table-wrap">
+              <table><thead><tr><th>Date</th><th>Reference</th><th>Supplier</th><th>Items</th><th>Paid from</th><th class="align-right">Amount</th></tr></thead><tbody id="stock-purchases-body"></tbody></table>
+              <div class="empty-state" id="stock-purchases-empty">No stock purchases recorded yet.</div>
+            </div>
+          </section>
+          <section class="panel finance-transactions-panel">
+            <div class="panel-heading"><div><h2>Opening balance audit</h2><p>Changes to opening balances are recorded with the staff account and reason.</p></div></div>
+            <div class="table-wrap">
+              <table><thead><tr><th>Changed</th><th>Effective date</th><th>Cash</th><th>GCash</th><th>Revolving</th><th>Savings</th><th>Reason</th></tr></thead><tbody id="fund-opening-history-body"></tbody></table>
+              <div class="empty-state" id="fund-opening-history-empty">Opening balance changes will appear here.</div>
+            </div>
+          </section>
+        </section>
+
+        <dialog class="product-dialog finance-dialog" id="fund-opening-dialog" aria-labelledby="fund-opening-title">
+          <form id="fund-opening-form">
+            <div class="dialog-heading"><div><p class="eyebrow">INITIAL SETUP</p><h2 id="fund-opening-title">Opening balances</h2></div><button class="dialog-close" id="close-fund-opening-dialog" type="button" aria-label="Close dialog">×</button></div>
+            <div class="form-error" id="fund-opening-error" role="alert" hidden></div>
+            <p class="finance-warning">Enter the actual balances on the effective date. Editing them later is allowed, but every change is kept in the audit history.</p>
+            <label class="form-field"><span>Effective date</span><input name="effectiveDate" type="date" required></label>
+            <div class="product-form-grid">
+              <label class="form-field"><span>Physical cash (₱)</span><input name="cashBalance" type="number" min="0" step="0.01" required inputmode="decimal"></label>
+              <label class="form-field"><span>GCash (₱)</span><input name="gcashBalance" type="number" min="0" step="0.01" required inputmode="decimal"></label>
+              <label class="form-field"><span>Revolving fund (₱)</span><input name="revolvingBalance" type="number" min="0" step="0.01" required inputmode="decimal"></label>
+              <label class="form-field"><span>Savings (₱)</span><input name="savingsBalance" type="number" min="0" step="0.01" required inputmode="decimal"></label>
+            </div>
+            <label class="form-field"><span>Reason for setup/change</span><input name="reason" required maxlength="300" placeholder="e.g. Initial cash count"></label>
+            <div class="dialog-actions"><button class="button button-secondary" id="cancel-fund-opening-button" type="button">Cancel</button><button class="button button-primary" type="submit">Save opening balances</button></div>
+          </form>
+        </dialog>
+
+        <dialog class="product-dialog finance-dialog" id="fund-transaction-dialog" aria-labelledby="fund-transaction-title">
+          <form id="fund-transaction-form">
+            <div class="dialog-heading"><div><p class="eyebrow">CASH MOVEMENT</p><h2 id="fund-transaction-title">Record fund transaction</h2></div><button class="dialog-close" id="close-fund-transaction-dialog" type="button" aria-label="Close dialog">×</button></div>
+            <div class="form-error" id="fund-transaction-error" role="alert" hidden></div>
+            <div class="product-form-grid">
+              <label class="form-field"><span>Type</span><select name="type" id="fund-transaction-type" required>
+                <option value="other_in">Other cash received</option><option value="other_out">Other cash withdrawal</option><option value="cash_drop">Cash drop to revolving fund</option><option value="gcash_in">Other GCash received</option><option value="gcash_out">Other GCash payment</option><option value="transfer">Transfer between funds</option>
+              </select></label>
+              <label class="form-field"><span>Date</span><input name="date" type="date" required></label>
+              <label class="form-field" id="fund-from-field"><span>From account</span><select name="fromAccount"><option value="">None</option><option value="cash">Cash on Hand</option><option value="gcash">GCash</option><option value="revolving">Revolving Fund</option><option value="savings">Savings Fund</option></select></label>
+              <label class="form-field" id="fund-to-field"><span>To account</span><select name="toAccount"><option value="">None</option><option value="cash">Cash on Hand</option><option value="gcash">GCash</option><option value="revolving">Revolving Fund</option><option value="savings">Savings Fund</option></select></label>
+              <label class="form-field"><span>Amount (₱)</span><input name="amount" type="number" min="0.01" step="0.01" required inputmode="decimal"></label>
+              <label class="form-field form-field-wide"><span>Description</span><input name="description" required maxlength="300" placeholder="Why was this money received, paid, or transferred?"></label>
+            </div>
+            <div class="dialog-actions"><button class="button button-secondary" id="cancel-fund-transaction-button" type="button">Cancel</button><button class="button button-primary" type="submit">Save transaction</button></div>
+          </form>
+        </dialog>
+
+        <dialog class="product-dialog finance-dialog stock-purchase-dialog" id="stock-purchase-dialog" aria-labelledby="stock-purchase-title">
+          <form id="stock-purchase-form">
+            <div class="dialog-heading"><div><p class="eyebrow">INVENTORY IN</p><h2 id="stock-purchase-title">Record stock purchase</h2></div><button class="dialog-close" id="close-stock-purchase-dialog" type="button" aria-label="Close dialog">×</button></div>
+            <div class="form-error" id="stock-purchase-error" role="alert" hidden></div>
+            <div class="product-form-grid">
+              <label class="form-field"><span>Date</span><input name="date" type="date" required></label>
+              <label class="form-field"><span>Paid from</span><select name="paymentAccount" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="revolving">Revolving Fund</option><option value="savings">Savings Fund</option></select></label>
+              <label class="form-field"><span>Supplier (optional)</span><input name="supplier" maxlength="120"></label>
+              <label class="form-field"><span>Invoice / description</span><input name="description" required maxlength="300"></label>
+            </div>
+            <div class="stock-purchase-line">
+              <label class="form-field"><span>Product</span><select id="purchase-product"><option value="">Choose product</option></select></label>
+              <label class="form-field"><span>Quantity</span><input id="purchase-quantity" type="number" min="0.001" step="0.001" inputmode="decimal"></label>
+              <label class="form-field"><span>Unit cost (₱)</span><input id="purchase-unit-cost" type="number" min="0" step="0.0001" inputmode="decimal"></label>
+              <button class="button button-secondary" id="add-purchase-item-button" type="button">Add item</button>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>Product</th><th class="align-right">Quantity</th><th class="align-right">Unit cost</th><th class="align-right">Line total</th><th></th></tr></thead><tbody id="purchase-draft-body"></tbody></table><div class="empty-state" id="purchase-draft-empty">Add products to this purchase.</div></div>
+            <div class="stock-purchase-total">Purchase total <strong id="purchase-draft-total">₱0.00</strong></div>
+            <div class="dialog-actions"><button class="button button-secondary" id="cancel-stock-purchase-button" type="button">Cancel</button><button class="button button-primary" type="submit">Save purchase</button></div>
+          </form>
+        </dialog>
 
         <dialog class="product-dialog customer-dialog" id="customer-dialog" aria-labelledby="customer-dialog-title">
           <form id="customer-form">

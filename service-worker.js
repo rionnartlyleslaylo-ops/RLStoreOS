@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "rlstoreos-shell-v9";
+const CACHE_NAME = "rlstoreos-shell-v11";
 const APP_SHELL = [
   "./index.html",
   "./style.css",

@@ -8,7 +8,15 @@
     customers: "rlstoreos.customers",
     collections: "rlstoreos.collections",
     saleVoids: "rlstoreos.sale-voids",
-    settings: "rlstoreos.settings"
+    settings: "rlstoreos.settings",
+    fundOpening: "rlstoreos.fund-opening",
+    fundOpeningHistory: "rlstoreos.fund-opening-history",
+    fundTransactions: "rlstoreos.fund-transactions",
+    stockPurchases: "rlstoreos.stock-purchases",
+    cashClosings: "rlstoreos.cash-closings",
+    cashClosingHistory: "rlstoreos.cash-closing-history",
+    gcashClosings: "rlstoreos.gcash-closings",
+    gcashClosingHistory: "rlstoreos.gcash-closing-history"
   };
   const NAV_LABELS = {
     dashboard: "Dashboard",
@@ -16,7 +24,8 @@
     inventory: "Inventory",
     customers: "Customers",
     expenses: "Expenses",
-    reports: "Reports"
+    reports: "Reports",
+    finance: "Cash & Funds"
   };
   const EXPENSE_CATEGORIES = ["Rent", "Internet", "Gasoline", "Utilities", "Salary", "Supplies", "Others"];
   const PAYMENT_SOURCES = ["Cash", "GCash", "Bank transfer", "Other"];
@@ -47,6 +56,9 @@
   let localMigrationSnapshot = null;
   let localMigrationError = null;
   let cloudRefreshTimer = null;
+  let financeEnabled = true;
+  let financeLocalOnly = false;
+  let stockPurchaseDraft = [];
 
   function getLocalDateKey(date) {
     const year = date.getFullYear();
@@ -67,6 +79,17 @@
     const raw = localStorage.getItem(key);
     if (raw === null) return {};
     const value = JSON.parse(raw);
+    if (!value || Array.isArray(value) || typeof value !== "object") {
+      throw new Error(`Saved data for "${key}" must be an object.`);
+    }
+    return value;
+  }
+
+  function readOptionalObject(key) {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return null;
+    const value = JSON.parse(raw);
+    if (value === null) return null;
     if (!value || Array.isArray(value) || typeof value !== "object") {
       throw new Error(`Saved data for "${key}" must be an object.`);
     }
@@ -154,11 +177,21 @@
       saleVoids: readArray(STORAGE_KEYS.saleVoids),
       collections: readArray(STORAGE_KEYS.collections),
       expenses: readExpenses(),
-      settings: readObject(STORAGE_KEYS.settings)
+      settings: readObject(STORAGE_KEYS.settings),
+      fundOpening: readOptionalObject(STORAGE_KEYS.fundOpening),
+      fundOpeningHistory: readArray(STORAGE_KEYS.fundOpeningHistory),
+      fundTransactions: readArray(STORAGE_KEYS.fundTransactions),
+      stockPurchases: readArray(STORAGE_KEYS.stockPurchases),
+      cashClosings: readArray(STORAGE_KEYS.cashClosings),
+      cashClosingHistory: readArray(STORAGE_KEYS.cashClosingHistory),
+      gcashClosings: readArray(STORAGE_KEYS.gcashClosings),
+      gcashClosingHistory: readArray(STORAGE_KEYS.gcashClosingHistory)
     };
   }
 
   function applyCloudStore(store) {
+    const preserveLocalFinance = hasLocalFinanceData(localMigrationSnapshot) &&
+      !hasCloudFinanceData(store) && !isCloudStoreEmpty(store);
     localStorage.setItem(STORAGE_KEYS.products, JSON.stringify(store.products));
     localStorage.setItem(STORAGE_KEYS.customers, JSON.stringify(store.customers));
     localStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(store.sales));
@@ -166,26 +199,63 @@
     localStorage.setItem(STORAGE_KEYS.collections, JSON.stringify(store.collections));
     localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(store.expenses));
     localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(store.settings));
+    if (!preserveLocalFinance) {
+      localStorage.setItem(STORAGE_KEYS.fundOpening, JSON.stringify(store.fundOpening));
+      localStorage.setItem(STORAGE_KEYS.fundOpeningHistory, JSON.stringify(store.fundOpeningHistory || []));
+      localStorage.setItem(STORAGE_KEYS.fundTransactions, JSON.stringify(store.fundTransactions || []));
+      localStorage.setItem(STORAGE_KEYS.stockPurchases, JSON.stringify(store.stockPurchases || []));
+      localStorage.setItem(STORAGE_KEYS.cashClosings, JSON.stringify(store.cashClosings || []));
+      localStorage.setItem(STORAGE_KEYS.cashClosingHistory, JSON.stringify(store.cashClosingHistory || []));
+      localStorage.setItem(STORAGE_KEYS.gcashClosings, JSON.stringify(store.gcashClosings || []));
+      localStorage.setItem(STORAGE_KEYS.gcashClosingHistory, JSON.stringify(store.gcashClosingHistory || []));
+    }
     saleVoidsEnabled = store.saleVoidsEnabled !== false;
+    financeEnabled = store.financeEnabled !== false;
+    financeLocalOnly = preserveLocalFinance;
   }
 
   function hasLocalStoreData(store) {
     return Boolean(store && (
       store.products.length || store.customers.length || store.sales.length ||
       store.saleVoids.length || store.collections.length || store.expenses.length ||
+      store.fundOpening || store.fundTransactions.length || store.stockPurchases.length ||
+      store.fundOpeningHistory.length || store.cashClosings.length || store.cashClosingHistory.length ||
+      store.gcashClosings.length || store.gcashClosingHistory.length ||
       Object.keys(store.settings).length
     ));
   }
 
   function isCloudStoreEmpty(store) {
     return !store.products.length && !store.customers.length && !store.sales.length &&
-      !(store.saleVoids || []).length && !store.collections.length && !store.expenses.length;
+      !(store.saleVoids || []).length && !store.collections.length && !store.expenses.length &&
+      !store.fundOpening && !(store.fundOpeningHistory || []).length &&
+      !(store.fundTransactions || []).length && !(store.stockPurchases || []).length &&
+      !(store.cashClosings || []).length && !(store.cashClosingHistory || []).length &&
+      !(store.gcashClosings || []).length && !(store.gcashClosingHistory || []).length;
+  }
+
+  function hasLocalFinanceData(store) {
+    return Boolean(store && (
+      store.fundOpening || store.fundOpeningHistory.length || store.fundTransactions.length ||
+      store.stockPurchases.length || store.cashClosings.length || store.cashClosingHistory.length ||
+      store.gcashClosings.length || store.gcashClosingHistory.length
+    ));
+  }
+
+  function hasCloudFinanceData(store) {
+    return Boolean(store && (
+      store.fundOpening || (store.fundOpeningHistory || []).length ||
+      (store.fundTransactions || []).length || (store.stockPurchases || []).length ||
+      (store.cashClosings || []).length || (store.cashClosingHistory || []).length ||
+      (store.gcashClosings || []).length || (store.gcashClosingHistory || []).length
+    ));
   }
 
   function renderWorkspace() {
     renderCustomers();
     renderExpenses();
     renderReports();
+    renderFinance();
     renderCart();
     setView(location.hash.slice(1) || "dashboard");
     renderDashboard();
@@ -261,15 +331,18 @@
       if (localMigrationError) {
         throw new Error(`This shared store is empty, but local data could not be prepared for import: ${localMigrationError}`);
       }
+      if (hasLocalFinanceData(localMigrationSnapshot) && !store.financeEnabled) {
+        throw new Error("This device has cash and fund records, but the finance migration is not installed in the shared store. Run database/finance-management-migration.sql before importing so those records are preserved.");
+      }
       const shouldImport = window.confirm(
-        "The shared store is empty. Import the products, customers, sales, collections, and expenses saved on this device? This import runs only into an empty shared store."
+        "The shared store is empty. Import the products, customers, sales, collections, expenses, and available cash/fund records saved on this device? This import runs only into an empty shared store."
       );
       if (!shouldImport) {
         await cloud.signOut();
         showCloudAuthError("Sign-in was canceled. The local data on this device was left unchanged.");
         return false;
       }
-      await cloud.importDeviceData(localMigrationSnapshot);
+      await cloud.importDeviceData(localMigrationSnapshot, store.financeEnabled);
       store = await cloud.loadStore();
     }
 
@@ -305,6 +378,9 @@
   }
 
   async function handleCloudLogout() {
+    if (financeLocalOnly && !window.confirm(
+      "Cash & Funds records on this device are not in the shared store. Export and reconcile them before signing out; signing out will clear this device's cached records. Continue anyway?"
+    )) return;
     let logoutError = null;
     try {
       await cloud.signOut();
@@ -314,7 +390,10 @@
       cloudUser = null;
       cloudReadOnly = false;
       [STORAGE_KEYS.products, STORAGE_KEYS.customers, STORAGE_KEYS.sales,
-        STORAGE_KEYS.saleVoids, STORAGE_KEYS.collections, STORAGE_KEYS.expenses, STORAGE_KEYS.settings]
+        STORAGE_KEYS.saleVoids, STORAGE_KEYS.collections, STORAGE_KEYS.expenses, STORAGE_KEYS.settings,
+        STORAGE_KEYS.fundOpening, STORAGE_KEYS.fundOpeningHistory, STORAGE_KEYS.fundTransactions,
+        STORAGE_KEYS.stockPurchases, STORAGE_KEYS.cashClosings, STORAGE_KEYS.cashClosingHistory,
+        STORAGE_KEYS.gcashClosings, STORAGE_KEYS.gcashClosingHistory]
         .forEach(key => localStorage.removeItem(key));
       elements.cloudAuthForm.reset();
       setCloudAuthVisible(true);
@@ -370,6 +449,24 @@
       errorElement.hidden = false;
     }
     return false;
+  }
+
+  function ensureFinanceWriteAccess(errorElement) {
+    if (financeLocalOnly) {
+      if (errorElement) {
+        errorElement.textContent = "These finance records are saved only on this device. They were kept separate from the shared store to avoid mixing ledgers.";
+        errorElement.hidden = false;
+      }
+      return false;
+    }
+    if (!financeEnabled) {
+      if (errorElement) {
+        errorElement.textContent = "Cash & Funds is not enabled for the shared store. Run the finance migration before recording transactions.";
+        errorElement.hidden = false;
+      }
+      return false;
+    }
+    return ensureWriteAccess(errorElement);
   }
 
   function cacheCloudRecord(storageKey, record, matchField) {
@@ -517,26 +614,18 @@
       const expenses = readArray(STORAGE_KEYS.expenses);
       const customers = readArray(STORAGE_KEYS.customers);
       const collections = readArray(STORAGE_KEYS.collections);
-      const settings = readObject(STORAGE_KEYS.settings);
 
       const todaysSales = sales.filter(sale => saleDate(sale) === today);
       const todaysExpenses = expenses.filter(expense => String(expense.date || "").slice(0, 10) === today);
       const salesAmount = todaysSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
       const grossProfit = todaysSales.reduce((sum, sale) => sum + saleTotal(sale) - saleCost(sale), 0);
       const expenseAmount = todaysExpenses.reduce((sum, expense) => sum + amount(expense.amount), 0);
-      const cashSales = todaysSales.filter(sale => isPayment(sale, "cash"))
-        .reduce((sum, sale) => sum + originalSaleTotal(sale), 0);
-      const cashExpenses = todaysExpenses.filter(expense => String(expense.paymentSource || expense.payment || "").toLowerCase() === "cash")
-        .reduce((sum, expense) => sum + amount(expense.amount), 0);
-      const cashCollections = collections
-        .filter(collection => String(collection.date || "").slice(0, 10) === today &&
-          String(collection.paymentSource || "Cash").toLowerCase() === "cash")
-        .reduce((sum, collection) => sum + amount(collection.amount), 0);
-      const cashRefunds = saleVoids
-        .filter(record => String(record.date || "").slice(0, 10) === today &&
-          String(record.refundMethod || "").toLowerCase() === "cash")
-        .reduce((sum, record) => sum + amount(record.refundAmount), 0);
-      const openingCash = amount(settings.openingCash);
+      const cashBreakdown = getCashBreakdown(today);
+      const cashSales = cashBreakdown.cashSales;
+      const cashExpenses = cashBreakdown.cashExpenses;
+      const cashCollections = cashBreakdown.cashCollections;
+      const cashRefunds = cashBreakdown.cashRefunds;
+      const openingCash = cashBreakdown.openingCash;
       const inventoryValue = products.reduce((sum, product) => sum + amount(product.stock) * amount(product.cost), 0);
       const creditSales = todaysSales.filter(sale => isPayment(sale, "credit")).reduce((sum, sale) => sum + saleTotal(sale), 0);
       const collectionsTotal = collections.reduce((sum, collection) => sum + amount(collection.amount), 0);
@@ -544,7 +633,7 @@
       const creditBalance = sales.filter(sale => isPayment(sale, "credit")).reduce((sum, sale) => sum + saleTotal(sale), 0) - collectionsTotal;
       const hasCustomerBalances = customers.some(customer => customer.balance !== undefined);
       const receivables = hasCustomerBalances ? customerBalances : Math.max(0, creditBalance);
-      const expectedCash = openingCash + cashSales + cashCollections - cashExpenses - cashRefunds;
+      const expectedCash = cashBreakdown.expectedCash;
       const hasUnknownStock = products.some(product => product.stock === null || product.stock === undefined);
 
       setText("sales-today", peso.format(salesAmount));
@@ -562,7 +651,22 @@
       setText("cash-collections", `+ ${peso.format(cashCollections)}`);
       setText("cash-expenses", `− ${peso.format(cashExpenses)}`);
       setText("cash-refunds", `− ${peso.format(cashRefunds)}`);
+      setText("cash-stock-purchases", `− ${peso.format(cashBreakdown.cashStockPurchases)}`);
+      setText("cash-other-in", `+ ${peso.format(cashBreakdown.otherCashIn)}`);
+      setText("cash-other-out", `− ${peso.format(cashBreakdown.otherCashOut)}`);
+      setText("cash-drops", `− ${peso.format(cashBreakdown.cashDrops)}`);
       setText("expected-cash", peso.format(expectedCash));
+      setText("gcash-balance", peso.format(calculateFundBalance("gcash", today)));
+      setText("revolving-balance", peso.format(calculateFundBalance("revolving", today)));
+      setText("savings-balance", peso.format(calculateFundBalance("savings", today)));
+      setText("today-collections", peso.format(collections
+        .filter(collection => String(collection.date || "").slice(0, 10) === today)
+        .reduce((sum, collection) => sum + amount(collection.amount), 0)));
+      const todayClosing = readArray(STORAGE_KEYS.cashClosings).find(closing =>
+        String(closing.date || closing.closingDate || closing.closing_date || "").slice(0, 10) === today);
+      setText("today-cash-difference", todayClosing
+        ? peso.format(amount(todayClosing.difference))
+        : "Not closed");
       renderSales(todaysSales);
       renderTopProducts(todaysSales);
       renderLowStock(products);
@@ -739,6 +843,171 @@
 
   function roundMoney(value) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  function getFundOpening() {
+    return readOptionalObject(STORAGE_KEYS.fundOpening);
+  }
+
+  function matchesTransactionDate(record, date) {
+    return String(record.date || record.transactionDate || record.transaction_date || "").slice(0, 10) === date;
+  }
+
+  function calculateFundBalance(account, asOfDate, additionalTransactions, openingOverride) {
+    const opening = openingOverride === undefined ? getFundOpening() : openingOverride;
+    const effectiveDate = opening && String(opening.effectiveDate || opening.effective_date || "").slice(0, 10);
+    if (effectiveDate && asOfDate < effectiveDate) return 0;
+    const openingKey = {
+      cash: "cashBalance",
+      gcash: "gcashBalance",
+      revolving: "revolvingBalance",
+      savings: "savingsBalance"
+    }[account];
+    let balance = opening
+      ? amount(opening[openingKey] ?? opening[openingKey.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)])
+      : account === "cash"
+        ? amount(readObject(STORAGE_KEYS.settings).openingCash)
+        : 0;
+    const startsOn = effectiveDate || "";
+    const inRange = record => {
+      const date = String(record.date || record.transactionDate || record.transaction_date || "").slice(0, 10);
+      return date <= asOfDate && (!startsOn || date >= startsOn);
+    };
+    if (account === "cash" || account === "gcash") {
+      const payment = account === "cash" ? "Cash" : "GCash";
+      const sales = readArray(STORAGE_KEYS.sales)
+        .filter(record => record.payment === payment && inRange(record))
+        .reduce((sum, record) => sum + originalSaleTotal(record), 0);
+      const collections = readArray(STORAGE_KEYS.collections)
+        .filter(record => String(record.paymentSource || record.payment_source || "Cash") === payment && inRange(record))
+        .reduce((sum, record) => sum + amount(record.amount), 0);
+      const expenses = readExpenses()
+        .filter(record => String(record.paymentSource || record.payment_source || "Cash") === payment && inRange(record))
+        .reduce((sum, record) => sum + amount(record.amount), 0);
+      const refunds = readArray(STORAGE_KEYS.saleVoids)
+        .filter(record => String(record.refundMethod || record.refund_method || "") === payment && inRange(record))
+        .reduce((sum, record) => sum + amount(record.refundAmount ?? record.refund_amount), 0);
+      balance += sales + collections - expenses - refunds;
+    }
+    const transactions = [
+      ...readArray(STORAGE_KEYS.fundTransactions),
+      ...(additionalTransactions || [])
+    ].filter(record => {
+      const date = String(record.date || record.transactionDate || record.transaction_date || "").slice(0, 10);
+      return date <= asOfDate && (!startsOn || date >= startsOn);
+    });
+    transactions.forEach(record => {
+      if ((record.toAccount || record.to_account) === account) balance += amount(record.amount);
+      if ((record.fromAccount || record.from_account) === account) balance -= amount(record.amount);
+    });
+    return roundMoney(balance);
+  }
+
+  function getCashBreakdown(date) {
+    const opening = getFundOpening();
+    const openingDate = opening && String(opening.effectiveDate || opening.effective_date || "").slice(0, 10);
+    const openingCash = opening
+      ? amount(opening.cashBalance ?? opening.cash_balance)
+      : amount(readObject(STORAGE_KEYS.settings).openingCash);
+    const previousDate = new Date(`${date}T00:00:00`);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const previousDateKey = getLocalDateKey(previousDate);
+    const openingForDay = openingDate
+      ? date > openingDate
+        ? calculateFundBalance("cash", previousDateKey)
+        : date === openingDate ? openingCash : 0
+      : calculateFundBalance("cash", previousDateKey);
+    const dayTransactions = readArray(STORAGE_KEYS.fundTransactions)
+      .filter(record => matchesTransactionDate(record, date));
+    const cashSales = readArray(STORAGE_KEYS.sales)
+      .filter(record => matchesTransactionDate(record, date) && record.payment === "Cash")
+      .reduce((sum, record) => sum + originalSaleTotal(record), 0);
+    const cashCollections = readArray(STORAGE_KEYS.collections)
+      .filter(record => matchesTransactionDate(record, date) && String(record.paymentSource || record.payment_source || "Cash") === "Cash")
+      .reduce((sum, record) => sum + amount(record.amount), 0);
+    const cashStockPurchases = dayTransactions
+      .filter(record => record.type === "stock_purchase" || record.transactionType === "stock_purchase" ||
+        record.transaction_type === "stock_purchase")
+      .filter(record => (record.fromAccount || record.from_account) === "cash")
+      .reduce((sum, record) => sum + amount(record.amount), 0);
+    const cashExpenses = readExpenses()
+      .filter(record => matchesTransactionDate(record, date) && String(record.paymentSource || record.payment_source || "Cash") === "Cash")
+      .reduce((sum, record) => sum + amount(record.amount), 0);
+    const cashRefunds = readArray(STORAGE_KEYS.saleVoids)
+      .filter(record => matchesTransactionDate(record, date) && String(record.refundMethod || record.refund_method || "") === "Cash")
+      .reduce((sum, record) => sum + amount(record.refundAmount ?? record.refund_amount), 0);
+    const otherCashIn = dayTransactions
+      .filter(record => (record.type || record.transactionType || record.transaction_type) === "other_in")
+      .reduce((sum, record) => sum + amount(record.amount), 0);
+    const otherCashOut = dayTransactions
+      .filter(record => (record.type || record.transactionType || record.transaction_type) === "other_out")
+      .reduce((sum, record) => sum + amount(record.amount), 0);
+    const cashDrops = dayTransactions
+      .filter(record => (record.type || record.transactionType || record.transaction_type) === "cash_drop")
+      .reduce((sum, record) => sum + amount(record.amount), 0);
+    return {
+      openingCash: openingForDay,
+      cashSales: roundMoney(cashSales),
+      cashCollections: roundMoney(cashCollections),
+      cashStockPurchases: roundMoney(cashStockPurchases),
+      cashExpenses: roundMoney(cashExpenses),
+      otherCashIn: roundMoney(otherCashIn),
+      otherCashOut: roundMoney(otherCashOut),
+      cashDrops: roundMoney(cashDrops),
+      cashRefunds: roundMoney(cashRefunds),
+      expectedCash: calculateFundBalance("cash", date)
+    };
+  }
+
+  function validateFundMovement(record) {
+    const accounts = Array.from(new Set([record.fromAccount, record.toAccount].filter(Boolean)));
+    if (record.fromAccount && record.amount > calculateFundBalance(record.fromAccount, record.date)) {
+      throw new Error(`Not enough ${financeAccount(record.fromAccount)} for this transaction.`);
+    }
+    const eventDates = new Set([record.date, today]);
+    [
+      ...readArray(STORAGE_KEYS.sales),
+      ...readArray(STORAGE_KEYS.collections),
+      ...readExpenses(),
+      ...readArray(STORAGE_KEYS.saleVoids),
+      ...readArray(STORAGE_KEYS.fundTransactions),
+      record
+    ].forEach(item => {
+      const date = financeDate(item);
+      if (date >= record.date && date <= today) eventDates.add(date);
+    });
+    accounts.forEach(account => {
+      Array.from(eventDates).sort().forEach(date => {
+        if (calculateFundBalance(account, date, [record]) < -0.005) {
+          throw new Error(`This transaction would make ${financeAccount(account)} negative on ${date}.`);
+        }
+      });
+    });
+  }
+
+  function validateFundOpening(opening) {
+    const existingOpening = getFundOpening();
+    const checkFrom = existingOpening
+      ? [opening.effectiveDate, existingOpening.effectiveDate || existingOpening.effective_date].sort()[0]
+      : opening.effectiveDate;
+    const eventDates = new Set([checkFrom, opening.effectiveDate, today]);
+    [
+      ...readArray(STORAGE_KEYS.sales),
+      ...readArray(STORAGE_KEYS.collections),
+      ...readExpenses(),
+      ...readArray(STORAGE_KEYS.saleVoids),
+      ...readArray(STORAGE_KEYS.fundTransactions)
+    ].forEach(item => {
+      const date = financeDate(item);
+      if (date >= checkFrom && date <= today) eventDates.add(date);
+    });
+    ["cash", "gcash", "revolving", "savings"].forEach(account => {
+      Array.from(eventDates).sort().forEach(date => {
+        if (calculateFundBalance(account, date, [], opening) < -0.005) {
+          throw new Error(`These opening balances would make ${financeAccount(account)} negative on ${date}.`);
+        }
+      });
+    });
   }
 
   function getCartTotal() {
@@ -1565,6 +1834,821 @@
     }
   }
 
+  const FUND_LABELS = {
+    cash: "Cash on Hand",
+    gcash: "GCash",
+    revolving: "Revolving Fund",
+    savings: "Savings Fund"
+  };
+
+  function financeDate(record) {
+    return String(record.date || record.transactionDate || record.transaction_date ||
+      record.closingDate || record.closing_date || "").slice(0, 10);
+  }
+
+  function financeRecordType(record) {
+    return record.type || record.transactionType || record.transaction_type || "";
+  }
+
+  function financeAccount(value) {
+    return value ? FUND_LABELS[value] || value : "—";
+  }
+
+  function makeFinanceId(prefix) {
+    return cloudMode ? cloud.makeId(prefix) : createSaleVoidId().replace("VOID-", prefix);
+  }
+
+  function renderFinance() {
+    const error = elements.financeError;
+    error.hidden = true;
+    elements.financeMigrationNotice.hidden = !cloudMode || (financeEnabled && !financeLocalOnly);
+    if (financeLocalOnly) {
+      elements.financeMigrationNotice.textContent =
+        "Cash & Funds records are saved only on this device. They were preserved because the shared store already contains data; reconcile them before using shared finance tracking.";
+    } else {
+      elements.financeMigrationNotice.textContent =
+        "Cash & Funds is not enabled for the shared store yet. Run database/finance-management-migration.sql in Supabase SQL Editor, then refresh.";
+    }
+    document.querySelectorAll(".finance-actions button, #set-fund-opening-button")
+      .forEach(button => {
+        button.disabled = !financeEnabled || financeLocalOnly || (cloudMode && (cloudReadOnly || !navigator.onLine));
+      });
+    document.getElementById("export-finance-button").disabled =
+      (!financeEnabled && !financeLocalOnly) || (cloudMode && (cloudReadOnly || !navigator.onLine));
+    document.querySelectorAll("#cash-closing-form button, #cash-closing-form input, #gcash-closing-form button, #gcash-closing-form input")
+      .forEach(input => {
+        input.disabled = !financeEnabled || financeLocalOnly || (cloudMode && (cloudReadOnly || !navigator.onLine));
+      });
+    if (!financeEnabled && !financeLocalOnly) {
+      ["fund-transactions-body", "stock-purchases-body", "fund-opening-history-body",
+        "cash-closing-history-body", "gcash-closing-history-body"]
+        .forEach(id => document.getElementById(id).replaceChildren());
+      return;
+    }
+    try {
+      const currentOpening = getFundOpening();
+      setText("finance-cash-balance", peso.format(calculateFundBalance("cash", today)));
+      setText("finance-gcash-balance", peso.format(calculateFundBalance("gcash", today)));
+      setText("finance-revolving-balance", peso.format(calculateFundBalance("revolving", today)));
+      setText("finance-savings-balance", peso.format(calculateFundBalance("savings", today)));
+      if (currentOpening) {
+        const effectiveDate = String(currentOpening.effectiveDate || currentOpening.effective_date || "").slice(0, 10);
+        elements.cashClosingDate.min = effectiveDate;
+        elements.gcashClosingDate.min = effectiveDate;
+      } else {
+        elements.cashClosingDate.min = "";
+        elements.gcashClosingDate.min = "";
+      }
+      if (!elements.cashClosingDate.value) elements.cashClosingDate.value = today;
+      renderCashClosingPreview();
+      if (!elements.gcashClosingDate.value) elements.gcashClosingDate.value = today;
+      renderGcashClosingPreview();
+      renderFinanceTransactions();
+      renderStockPurchases();
+      renderOpeningHistory();
+      renderCashClosingHistory();
+      renderGcashClosingHistory();
+    } catch (renderError) {
+      error.textContent = `Cash & Funds could not be loaded: ${renderError instanceof Error ? renderError.message : "Unexpected data error."}`;
+      error.hidden = false;
+    }
+  }
+
+  function renderCashClosingPreview() {
+    const date = elements.cashClosingDate.value || today;
+    const breakdown = getCashBreakdown(date);
+    setText("cash-closing-expected", peso.format(breakdown.expectedCash));
+    const actualCash = elements.cashClosingForm.elements.namedItem("actualCash").value;
+    setText("cash-closing-difference", actualCash && Number.isFinite(Number(actualCash))
+      ? peso.format(Number(actualCash) - breakdown.expectedCash)
+      : "—");
+    const container = elements.cashClosingBreakdown;
+    container.replaceChildren();
+    [
+      ["Opening cash", breakdown.openingCash],
+      ["Cash sales", breakdown.cashSales],
+      ["Cash credit collections", breakdown.cashCollections],
+      ["Cash stock purchases", -breakdown.cashStockPurchases],
+      ["Cash expenses", -breakdown.cashExpenses],
+      ["Cash refunds", -breakdown.cashRefunds],
+      ["Other cash in", breakdown.otherCashIn],
+      ["Other cash out", -breakdown.otherCashOut],
+      ["Cash drops", -breakdown.cashDrops]
+    ].forEach(([label, value]) => {
+      const line = document.createElement("div");
+      const name = document.createElement("span");
+      name.textContent = label;
+      const amountLabel = document.createElement("strong");
+      amountLabel.textContent = peso.format(Number(value));
+      line.append(name, amountLabel);
+      container.append(line);
+    });
+  }
+
+  function renderGcashClosingPreview() {
+    const date = elements.gcashClosingDate.value || today;
+    const expected = calculateFundBalance("gcash", date);
+    setText("gcash-closing-expected", peso.format(expected));
+    const actual = elements.gcashClosingForm.elements.namedItem("actualGcash").value;
+    setText("gcash-closing-difference", actual && Number.isFinite(Number(actual))
+      ? peso.format(Number(actual) - expected)
+      : "—");
+  }
+
+  function renderCashClosingHistory() {
+    const body = elements.cashClosingHistoryBody;
+    const records = readArray(STORAGE_KEYS.cashClosings);
+    records.sort((left, right) => financeDate(right).localeCompare(financeDate(left)));
+    body.replaceChildren();
+    elements.cashClosingHistoryEmpty.hidden = records.length > 0;
+    records.forEach(record => {
+      const row = document.createElement("tr");
+      appendCell(row, financeDate(record));
+      appendCell(row, peso.format(amount(record.expectedCash ?? record.expected_cash)), "align-right");
+      appendCell(row, peso.format(amount(record.actualCash ?? record.actual_cash)), "align-right");
+      const difference = Number(record.difference);
+      appendCell(row, peso.format(Number.isFinite(difference) ? difference : 0), "align-right");
+      appendCell(row, record.notes || "");
+      body.append(row);
+    });
+  }
+
+  function renderGcashClosingHistory() {
+    const body = elements.gcashClosingHistoryBody;
+    const records = readArray(STORAGE_KEYS.gcashClosings)
+      .slice()
+      .sort((left, right) => financeDate(right).localeCompare(financeDate(left)));
+    body.replaceChildren();
+    elements.gcashClosingHistoryEmpty.hidden = records.length > 0;
+    records.forEach(record => {
+      const row = document.createElement("tr");
+      appendCell(row, financeDate(record));
+      appendCell(row, peso.format(amount(record.expectedGcash ?? record.expectedBalance ??
+        record.expected_gcash ?? record.expected_balance)), "align-right");
+      appendCell(row, peso.format(amount(record.actualGcash ?? record.actualBalance ??
+        record.actual_gcash ?? record.actual_balance)), "align-right");
+      appendCell(row, peso.format(amount(record.difference)), "align-right");
+      appendCell(row, record.notes || "");
+      body.append(row);
+    });
+  }
+
+  function renderFinanceTransactions() {
+    const body = elements.fundTransactionsBody;
+    const records = readArray(STORAGE_KEYS.fundTransactions)
+      .slice()
+      .sort((left, right) => financeDate(right).localeCompare(financeDate(left)) ||
+        String(right.createdAt || right.created_at || "").localeCompare(String(left.createdAt || left.created_at || "")));
+    body.replaceChildren();
+    elements.fundTransactionsEmpty.hidden = records.length > 0;
+    records.forEach(record => {
+      const type = financeRecordType(record);
+      const row = document.createElement("tr");
+      appendCell(row, financeDate(record));
+      appendCell(row, record.reference || "—");
+      appendCell(row, type.replace(/_/g, " "));
+      appendCell(row, financeAccount(record.fromAccount || record.from_account));
+      appendCell(row, financeAccount(record.toAccount || record.to_account));
+      appendCell(row, record.description || "");
+      appendCell(row, peso.format(amount(record.amount)), "align-right");
+      body.append(row);
+    });
+  }
+
+  function renderStockPurchases() {
+    const body = elements.stockPurchasesBody;
+    const records = readArray(STORAGE_KEYS.stockPurchases)
+      .slice()
+      .sort((left, right) => financeDate(right).localeCompare(financeDate(left)));
+    body.replaceChildren();
+    elements.stockPurchasesEmpty.hidden = records.length > 0;
+    records.forEach(record => {
+      const row = document.createElement("tr");
+      appendCell(row, financeDate(record));
+      appendCell(row, record.reference || "—");
+      appendCell(row, record.supplier || "—");
+      const items = record.items || [];
+      appendCell(row, items.map(item => `${item.name || item.productId} × ${quantityFormat.format(amount(item.quantity))}`).join(", "));
+      appendCell(row, financeAccount(record.paymentAccount || record.payment_account));
+      appendCell(row, peso.format(amount(record.total)), "align-right");
+      body.append(row);
+    });
+  }
+
+  function renderOpeningHistory() {
+    const body = elements.fundOpeningHistoryBody;
+    const records = readArray(STORAGE_KEYS.fundOpeningHistory)
+      .slice()
+      .sort((left, right) => String(right.changedAt || right.changed_at || "").localeCompare(String(left.changedAt || left.changed_at || "")));
+    body.replaceChildren();
+    elements.fundOpeningHistoryEmpty.hidden = records.length > 0;
+    records.forEach(record => {
+      const balances = record.newBalances || record.new_balances || {};
+      const row = document.createElement("tr");
+      appendCell(row, localDate.format(new Date(record.changedAt || record.changed_at || "")));
+      appendCell(row, String(record.effectiveDate || record.effective_date || "").slice(0, 10));
+      appendCell(row, peso.format(amount(balances.cash ?? balances.cash_balance)));
+      appendCell(row, peso.format(amount(balances.gcash ?? balances.gcash_balance)));
+      appendCell(row, peso.format(amount(balances.revolving ?? balances.revolving_balance)));
+      appendCell(row, peso.format(amount(balances.savings ?? balances.savings_balance)));
+      appendCell(row, record.reason || "");
+      body.append(row);
+    });
+  }
+
+  function openFundOpeningDialog() {
+    if (!ensureFinanceWriteAccess(elements.financeError)) return;
+    const opening = getFundOpening();
+    elements.fundOpeningForm.reset();
+    elements.fundOpeningError.hidden = true;
+    elements.fundOpeningForm.elements.namedItem("effectiveDate").value =
+      opening ? String(opening.effectiveDate || opening.effective_date || "").slice(0, 10) : today;
+    elements.fundOpeningForm.elements.namedItem("cashBalance").value =
+      String(opening ? amount(opening.cashBalance ?? opening.cash_balance) : 0);
+    elements.fundOpeningForm.elements.namedItem("gcashBalance").value =
+      String(opening ? amount(opening.gcashBalance ?? opening.gcash_balance) : 0);
+    elements.fundOpeningForm.elements.namedItem("revolvingBalance").value =
+      String(opening ? amount(opening.revolvingBalance ?? opening.revolving_balance) : 0);
+    elements.fundOpeningForm.elements.namedItem("savingsBalance").value =
+      String(opening ? amount(opening.savingsBalance ?? opening.savings_balance) : 0);
+    elements.fundOpeningDialog.showModal();
+  }
+
+  async function saveFundOpening(event) {
+    event.preventDefault();
+    elements.fundOpeningError.hidden = true;
+    if (!elements.fundOpeningForm.reportValidity()) return;
+    if (!ensureFinanceWriteAccess(elements.fundOpeningError)) return;
+    let cloudSaved = false;
+    try {
+      const form = elements.fundOpeningForm;
+      const opening = {
+        effectiveDate: form.elements.namedItem("effectiveDate").value,
+        cashBalance: roundMoney(Number(form.elements.namedItem("cashBalance").value)),
+        gcashBalance: roundMoney(Number(form.elements.namedItem("gcashBalance").value)),
+        revolvingBalance: roundMoney(Number(form.elements.namedItem("revolvingBalance").value)),
+        savingsBalance: roundMoney(Number(form.elements.namedItem("savingsBalance").value))
+      };
+      const reason = form.elements.namedItem("reason").value.trim();
+      if (opening.effectiveDate > today) throw new Error("Choose an effective date that is not in the future.");
+      if (Object.values(opening).slice(1).some(value => !Number.isFinite(value) || value < 0)) {
+        throw new Error("Opening balances must be zero or greater.");
+      }
+      validateFundOpening(opening);
+      const history = {
+        id: makeFinanceId("OPEN-"),
+        effectiveDate: opening.effectiveDate,
+        newBalances: {
+          cash: opening.cashBalance, gcash: opening.gcashBalance,
+          revolving: opening.revolvingBalance, savings: opening.savingsBalance
+        },
+        reason,
+        changedAt: new Date().toISOString()
+      };
+      if (cloudMode) {
+        const saved = await cloud.setFundOpening(opening, reason);
+        cloudSaved = true;
+        localStorage.setItem(STORAGE_KEYS.fundOpening, JSON.stringify(saved.opening));
+        localStorage.setItem(STORAGE_KEYS.fundOpeningHistory, JSON.stringify(saved.history));
+      } else {
+        const oldOpening = getFundOpening();
+        if (oldOpening) history.previousBalances = {
+          cash: amount(oldOpening.cashBalance),
+          gcash: amount(oldOpening.gcashBalance),
+          revolving: amount(oldOpening.revolvingBalance),
+          savings: amount(oldOpening.savingsBalance)
+        };
+        saveLocalTransaction([
+          { key: STORAGE_KEYS.fundOpening, value: JSON.stringify(opening), previous: localStorage.getItem(STORAGE_KEYS.fundOpening), label: "fund openings" },
+          { key: STORAGE_KEYS.fundOpeningHistory, value: JSON.stringify([...readArray(STORAGE_KEYS.fundOpeningHistory), history]), previous: localStorage.getItem(STORAGE_KEYS.fundOpeningHistory), label: "opening balance audit" }
+        ]);
+      }
+      elements.fundOpeningDialog.close();
+      renderFinance();
+      renderDashboard();
+    } catch (error) {
+      elements.fundOpeningError.textContent = cloudSaved
+        ? `Opening balances saved, but this device could not refresh: ${error instanceof Error ? error.message : "Unexpected error."}`
+        : `Opening balances could not be saved: ${error instanceof Error ? error.message : "Unexpected error."}`;
+      elements.fundOpeningError.hidden = false;
+    }
+  }
+
+  function updateFundTransactionFields() {
+    const form = elements.fundTransactionForm;
+    const type = elements.fundTransactionType.value;
+    const from = form.elements.namedItem("fromAccount");
+    const to = form.elements.namedItem("toAccount");
+    from.disabled = type !== "transfer";
+    to.disabled = type !== "transfer";
+    if (type === "other_in") { from.value = ""; to.value = "cash"; }
+    if (type === "other_out") { from.value = "cash"; to.value = ""; }
+    if (type === "cash_drop") { from.value = "cash"; to.value = "revolving"; }
+    if (type === "gcash_in") { from.value = ""; to.value = "gcash"; }
+    if (type === "gcash_out") { from.value = "gcash"; to.value = ""; }
+    elements.fundFromField.hidden = !["other_out", "cash_drop", "gcash_out", "transfer"].includes(type);
+    elements.fundToField.hidden = !["other_in", "cash_drop", "gcash_in", "transfer"].includes(type);
+  }
+
+  function openFundTransactionDialog(type) {
+    if (!ensureFinanceWriteAccess(elements.financeError)) return;
+    elements.fundTransactionForm.reset();
+    elements.fundTransactionError.hidden = true;
+    elements.fundTransactionForm.elements.namedItem("date").value = today;
+    elements.fundTransactionType.value = type;
+    updateFundTransactionFields();
+    elements.fundTransactionDialog.showModal();
+  }
+
+  async function saveFundTransaction(event) {
+    event.preventDefault();
+    elements.fundTransactionError.hidden = true;
+    if (!elements.fundTransactionForm.reportValidity()) return;
+    if (!ensureFinanceWriteAccess(elements.fundTransactionError)) return;
+    let cloudSaved = false;
+    try {
+      const form = elements.fundTransactionForm;
+      const type = elements.fundTransactionType.value;
+      const accountValues = {
+        other_in: ["", "cash"], other_out: ["cash", ""],
+        cash_drop: ["cash", "revolving"], gcash_in: ["", "gcash"], gcash_out: ["gcash", ""]
+      };
+      const pair = accountValues[type] || [
+        form.elements.namedItem("fromAccount").value,
+        form.elements.namedItem("toAccount").value
+      ];
+      const record = {
+        id: makeFinanceId("FUND-"),
+        reference: makeFinanceId("FT-"),
+        date: form.elements.namedItem("date").value,
+        type,
+        fromAccount: pair[0] || "",
+        toAccount: pair[1] || "",
+        amount: roundMoney(Number(form.elements.namedItem("amount").value)),
+        description: form.elements.namedItem("description").value.trim(),
+        createdAt: new Date().toISOString()
+      };
+      if (!record.date || record.date > today) throw new Error("Choose a transaction date that is not in the future.");
+      if (!Number.isFinite(record.amount) || record.amount <= 0) throw new Error("Enter an amount greater than zero.");
+      validateFundMovement(record);
+      if (cloudMode) {
+        const saved = await cloud.recordFundTransaction(record);
+        cloudSaved = true;
+        cacheCloudRecord(STORAGE_KEYS.fundTransactions, saved);
+        await refreshAfterCloudWrite("Fund transaction");
+      } else {
+        const rows = readArray(STORAGE_KEYS.fundTransactions);
+        rows.push(record);
+        localStorage.setItem(STORAGE_KEYS.fundTransactions, JSON.stringify(rows));
+      }
+      elements.fundTransactionDialog.close();
+      renderFinance();
+      renderDashboard();
+    } catch (error) {
+      elements.fundTransactionError.textContent = cloudSaved
+        ? `Transaction saved, but this device could not refresh: ${error instanceof Error ? error.message : "Unexpected error."}`
+        : `Transaction could not be saved: ${error instanceof Error ? error.message : "Unexpected error."}`;
+      elements.fundTransactionError.hidden = false;
+    }
+  }
+
+  function renderPurchaseDraft() {
+    const body = elements.purchaseDraftBody;
+    body.replaceChildren();
+    elements.purchaseDraftEmpty.hidden = stockPurchaseDraft.length > 0;
+    let total = 0;
+    stockPurchaseDraft.forEach((item, index) => {
+      const row = document.createElement("tr");
+      appendCell(row, item.name);
+      appendCell(row, quantityFormat.format(item.quantity), "align-right");
+      appendCell(row, peso.format(item.unitCost), "align-right");
+      const lineTotal = roundMoney(item.quantity * item.unitCost);
+      total += lineTotal;
+      appendCell(row, peso.format(lineTotal), "align-right");
+      const actionCell = document.createElement("td");
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "table-action";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => {
+        stockPurchaseDraft.splice(index, 1);
+        renderPurchaseDraft();
+      });
+      actionCell.append(remove);
+      row.append(actionCell);
+      body.append(row);
+    });
+    setText("purchase-draft-total", peso.format(roundMoney(total)));
+  }
+
+  function openStockPurchaseDialog() {
+    if (!ensureFinanceWriteAccess(elements.financeError)) return;
+    const products = readProducts();
+    elements.purchaseProduct.replaceChildren(new Option("Choose product", ""));
+    products.forEach(product => elements.purchaseProduct.add(new Option(`${product.name} · ${product.unit}`, product.id)));
+    elements.stockPurchaseForm.reset();
+    elements.stockPurchaseForm.elements.namedItem("date").value = today;
+    elements.stockPurchaseError.hidden = true;
+    stockPurchaseDraft = [];
+    renderPurchaseDraft();
+    elements.stockPurchaseDialog.showModal();
+  }
+
+  function addStockPurchaseItem() {
+    const productId = elements.purchaseProduct.value;
+    const product = readProducts().find(item => item.id === productId);
+    const quantity = Number(elements.purchaseQuantity.value);
+    const unitCost = Number(elements.purchaseUnitCost.value);
+    if (!product || !Number.isFinite(quantity) || quantity <= 0 ||
+      !Number.isFinite(unitCost) || unitCost < 0) {
+      elements.stockPurchaseError.textContent = "Choose a product and enter a positive quantity and valid unit cost.";
+      elements.stockPurchaseError.hidden = false;
+      return;
+    }
+    if (stockPurchaseDraft.some(item => item.productId === product.id)) {
+      elements.stockPurchaseError.textContent = "This product is already in the purchase. Remove it first if you need to change its quantity or cost.";
+      elements.stockPurchaseError.hidden = false;
+      return;
+    }
+    stockPurchaseDraft.push({ productId: product.id, name: product.name, unit: product.unit, quantity, unitCost });
+    elements.stockPurchaseError.hidden = true;
+    elements.purchaseProduct.value = "";
+    elements.purchaseQuantity.value = "";
+    elements.purchaseUnitCost.value = "";
+    renderPurchaseDraft();
+  }
+
+  async function saveStockPurchase(event) {
+    event.preventDefault();
+    elements.stockPurchaseError.hidden = true;
+    if (!elements.stockPurchaseForm.reportValidity()) return;
+    if (!ensureFinanceWriteAccess(elements.stockPurchaseError)) return;
+    if (!stockPurchaseDraft.length) {
+      elements.stockPurchaseError.textContent = "Add at least one product to the stock purchase.";
+      elements.stockPurchaseError.hidden = false;
+      return;
+    }
+    let cloudSaved = false;
+    try {
+      const form = elements.stockPurchaseForm;
+      const date = form.elements.namedItem("date").value;
+      const paymentAccount = form.elements.namedItem("paymentAccount").value;
+      const total = roundMoney(stockPurchaseDraft.reduce((sum, item) => sum + item.quantity * item.unitCost, 0));
+      if (date > today) throw new Error("Choose a purchase date that is not in the future.");
+      if (total <= 0) throw new Error("The stock purchase total must be greater than zero.");
+      if (total > calculateFundBalance(paymentAccount, date)) {
+        throw new Error(`Not enough ${financeAccount(paymentAccount)} to pay for this purchase.`);
+      }
+      const reference = makeFinanceId("PUR-");
+      const purchase = {
+        id: makeFinanceId("PUR-"),
+        reference,
+        date,
+        supplier: form.elements.namedItem("supplier").value.trim(),
+        description: form.elements.namedItem("description").value.trim(),
+        paymentAccount,
+        items: stockPurchaseDraft.map(item => ({
+          ...item,
+          total: roundMoney(item.quantity * item.unitCost)
+        })),
+        total,
+        createdAt: new Date().toISOString()
+      };
+      validateFundMovement({
+        date,
+        type: "stock_purchase",
+        fromAccount: paymentAccount,
+        toAccount: "",
+        amount: total
+      });
+      if (cloudMode) {
+        const saved = await cloud.recordStockPurchase(purchase);
+        cloudSaved = true;
+        cacheCloudRecord(STORAGE_KEYS.stockPurchases, saved.purchase);
+        cacheCloudRecord(STORAGE_KEYS.fundTransactions, saved.transaction);
+        await refreshAfterCloudWrite("Stock purchase");
+      } else {
+        const products = readProducts();
+        const beforeProducts = localStorage.getItem(STORAGE_KEYS.products);
+        const beforePurchases = localStorage.getItem(STORAGE_KEYS.stockPurchases);
+        const beforeTransactions = localStorage.getItem(STORAGE_KEYS.fundTransactions);
+        const purchases = readArray(STORAGE_KEYS.stockPurchases);
+        const transactions = readArray(STORAGE_KEYS.fundTransactions);
+        const updatedProducts = products.map(product => {
+          const item = stockPurchaseDraft.find(entry => entry.productId === product.id);
+          if (!item) return product;
+          const oldStock = amount(product.stock);
+          const newStock = oldStock + item.quantity;
+          const cost = product.stock === null
+            ? item.unitCost
+            : newStock === 0 ? item.unitCost : ((oldStock * product.cost) + (item.quantity * item.unitCost)) / newStock;
+          return {
+            ...product,
+            stock: roundQuantity(newStock),
+            cost: Math.round(cost * 10000) / 10000
+          };
+        });
+        const transaction = {
+          id: purchase.id,
+          reference,
+          date,
+          type: "stock_purchase",
+          fromAccount: paymentAccount,
+          toAccount: "",
+          amount: total,
+          description: purchase.description,
+          relatedReference: reference,
+          createdAt: purchase.createdAt
+        };
+        purchases.push(purchase);
+        transactions.push(transaction);
+        saveLocalTransaction([
+          { key: STORAGE_KEYS.products, value: JSON.stringify(updatedProducts), previous: beforeProducts, label: "inventory" },
+          { key: STORAGE_KEYS.stockPurchases, value: JSON.stringify(purchases), previous: beforePurchases, label: "stock purchases" },
+          { key: STORAGE_KEYS.fundTransactions, value: JSON.stringify(transactions), previous: beforeTransactions, label: "fund transactions" }
+        ]);
+      }
+      elements.stockPurchaseDialog.close();
+      stockPurchaseDraft = [];
+      renderInventory();
+      renderCatalog(elements.productSearch.value);
+      renderFinance();
+      renderDashboard();
+    } catch (error) {
+      elements.stockPurchaseError.textContent = cloudSaved
+        ? `Purchase saved, but this device could not refresh: ${error instanceof Error ? error.message : "Unexpected error."}`
+        : `Stock purchase could not be saved: ${error instanceof Error ? error.message : "Unexpected error."}`;
+      elements.stockPurchaseError.hidden = false;
+    }
+  }
+
+  async function saveCashClosing(event) {
+    event.preventDefault();
+    if (!elements.cashClosingForm.reportValidity()) return;
+    if (!ensureFinanceWriteAccess(elements.financeError)) return;
+    try {
+      const date = elements.cashClosingDate.value;
+      const actualCash = roundMoney(Number(elements.cashClosingForm.elements.namedItem("actualCash").value));
+      const notes = elements.cashClosingForm.elements.namedItem("notes").value.trim();
+      const breakdown = getCashBreakdown(date);
+      if (date > today || (elements.cashClosingDate.min && date < elements.cashClosingDate.min)) {
+        throw new Error("Choose a date on or after the opening balance date, and not in the future.");
+      }
+      if (!Number.isFinite(actualCash) || actualCash < 0) throw new Error("Enter a cash count of zero or greater.");
+      let closing;
+      if (cloudMode) {
+        closing = await cloud.saveDailyCashClosing(date, actualCash, notes);
+        cacheCloudRecord(STORAGE_KEYS.cashClosings, closing, "date");
+        await refreshAfterCloudWrite("Daily cash closing");
+      } else {
+        const records = readArray(STORAGE_KEYS.cashClosings);
+        const history = readArray(STORAGE_KEYS.cashClosingHistory);
+        const old = records.find(record => financeDate(record) === date);
+        closing = {
+          date,
+          expectedCash: breakdown.expectedCash,
+          actualCash,
+          difference: roundMoney(actualCash - breakdown.expectedCash),
+          breakdown,
+          notes,
+          createdAt: old ? old.createdAt : new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        if (old) history.push({
+          date,
+          previousRecord: old,
+          newRecord: { actualCash, notes },
+          changedAt: new Date().toISOString()
+        });
+        const nextRecords = old
+          ? records.map(record => financeDate(record) === date ? closing : record)
+          : [...records, closing];
+        saveLocalTransaction([
+          { key: STORAGE_KEYS.cashClosings, value: JSON.stringify(nextRecords), previous: localStorage.getItem(STORAGE_KEYS.cashClosings), label: "daily closings" },
+          { key: STORAGE_KEYS.cashClosingHistory, value: JSON.stringify(history), previous: localStorage.getItem(STORAGE_KEYS.cashClosingHistory), label: "closing audit" }
+        ]);
+      }
+      elements.cashClosingForm.elements.namedItem("actualCash").value = String(actualCash);
+      renderCashClosingHistory();
+      renderDashboard();
+    } catch (error) {
+      elements.financeError.textContent = `Daily cash closing could not be saved: ${error instanceof Error ? error.message : "Unexpected error."}`;
+      elements.financeError.hidden = false;
+    }
+  }
+
+  async function saveGcashClosing(event) {
+    event.preventDefault();
+    if (!elements.gcashClosingForm.reportValidity()) return;
+    if (!ensureFinanceWriteAccess(elements.gcashClosingError)) return;
+    try {
+      const date = elements.gcashClosingDate.value;
+      const actualGcash = roundMoney(Number(elements.gcashClosingForm.elements.namedItem("actualGcash").value));
+      const notes = elements.gcashClosingForm.elements.namedItem("notes").value.trim();
+      const opening = getFundOpening();
+      const openingDate = opening && String(opening.effectiveDate || opening.effective_date || "").slice(0, 10);
+      if (date > today || (openingDate && date < openingDate)) {
+        throw new Error("Choose a date on or after the opening balance date, and not in the future.");
+      }
+      if (!Number.isFinite(actualGcash) || actualGcash < 0) {
+        throw new Error("Enter an actual GCash balance of zero or greater.");
+      }
+      const expectedGcash = calculateFundBalance("gcash", date);
+      let closing;
+      if (cloudMode) {
+        closing = await cloud.saveDailyGcashClosing(date, actualGcash, notes);
+        cacheCloudRecord(STORAGE_KEYS.gcashClosings, closing, "date");
+        await refreshAfterCloudWrite("GCash reconciliation");
+      } else {
+        const records = readArray(STORAGE_KEYS.gcashClosings);
+        const history = readArray(STORAGE_KEYS.gcashClosingHistory);
+        const old = records.find(record => financeDate(record) === date);
+        closing = {
+          date,
+          expectedGcash,
+          actualGcash,
+          difference: roundMoney(actualGcash - expectedGcash),
+          notes,
+          createdAt: old ? old.createdAt : new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        if (old) history.push({
+          date,
+          previousRecord: old,
+          newRecord: { actualGcash, notes },
+          changedAt: new Date().toISOString()
+        });
+        const nextRecords = old
+          ? records.map(record => financeDate(record) === date ? closing : record)
+          : [...records, closing];
+        saveLocalTransaction([
+          { key: STORAGE_KEYS.gcashClosings, value: JSON.stringify(nextRecords), previous: localStorage.getItem(STORAGE_KEYS.gcashClosings), label: "GCash reconciliations" },
+          { key: STORAGE_KEYS.gcashClosingHistory, value: JSON.stringify(history), previous: localStorage.getItem(STORAGE_KEYS.gcashClosingHistory), label: "GCash reconciliation audit" }
+        ]);
+      }
+      elements.gcashClosingForm.elements.namedItem("actualGcash").value = String(actualGcash);
+      renderGcashClosingHistory();
+      elements.gcashClosingError.hidden = true;
+    } catch (error) {
+      elements.gcashClosingError.textContent =
+        `GCash reconciliation could not be saved: ${error instanceof Error ? error.message : "Unexpected error."}`;
+      elements.gcashClosingError.hidden = false;
+    }
+  }
+
+  function exportFinanceCsv() {
+    if (!financeEnabled && !financeLocalOnly) return;
+    const records = readArray(STORAGE_KEYS.fundTransactions);
+    const headings = ["Date", "Reference", "Type", "From account", "To account", "Amount", "Description"];
+    const lines = [headings, ...records.map(record => [
+      financeDate(record),
+      record.reference || "",
+      financeRecordType(record),
+      financeAccount(record.fromAccount || record.from_account),
+      financeAccount(record.toAccount || record.to_account),
+      amount(record.amount).toFixed(2),
+      record.description || ""
+    ])];
+    const csv = lines.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `rlstoreos-funds-${today}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function getReportExportRows() {
+    const headings = [
+      "Section", "Date", "Reference", "Name", "Type", "Payment / Account",
+      "Quantity", "Amount", "Gross Profit", "Balance / Status", "Description"
+    ];
+    const rows = [headings];
+    const addRow = (section, date, reference, name, type, account, quantity, value, profit, balance, description) => {
+      rows.push([
+        section, date || "", reference || "", name || "", type || "", account || "",
+        quantity ?? "", value ?? "", profit ?? "", balance ?? "", description || ""
+      ]);
+    };
+
+    readArray(STORAGE_KEYS.sales).forEach(sale => {
+      const items = lineItems(sale);
+      const total = saleTotal(sale);
+      addRow("Sales", saleDate(sale), sale.invoice, sale.customer, "Net sale", sale.payment,
+        items.reduce((sum, item) => sum + amount(item.quantity), 0), total,
+        roundMoney(total - saleCost(sale)), "", "Amount reflects recorded returns.");
+    });
+    readArray(STORAGE_KEYS.collections).forEach(record => {
+      addRow("Credit collections", financeDate(record), record.id, record.customer, "Collection",
+        record.paymentSource || record.payment_source, "", amount(record.amount), "", "", record.receipt || "");
+    });
+    readExpenses().forEach(record => {
+      addRow("Operating expenses", record.date, record.id, record.category, "Expense",
+        record.paymentSource, "", amount(record.amount), "", "", record.description);
+    });
+    readArray(STORAGE_KEYS.fundTransactions).forEach(record => {
+      if (financeRecordType(record) === "stock_purchase") return;
+      addRow("Fund movements", financeDate(record), record.reference, record.description,
+        financeRecordType(record), `${financeAccount(record.fromAccount || record.from_account)} → ${financeAccount(record.toAccount || record.to_account)}`,
+        "", amount(record.amount), "", "", record.description);
+    });
+    readArray(STORAGE_KEYS.stockPurchases).forEach(record => {
+      addRow("Stock purchases", financeDate(record), record.reference, record.supplier,
+        "Inventory purchase", financeAccount(record.paymentAccount || record.payment_account),
+        (record.items || []).reduce((sum, item) => sum + amount(item.quantity), 0),
+        amount(record.total), "", "", record.description);
+    });
+
+    const opening = getFundOpening();
+    if (opening) {
+      [
+        ["cash", opening.cashBalance ?? opening.cash_balance],
+        ["gcash", opening.gcashBalance ?? opening.gcash_balance],
+        ["revolving", opening.revolvingBalance ?? opening.revolving_balance],
+        ["savings", opening.savingsBalance ?? opening.savings_balance]
+      ].forEach(([account, balance]) => {
+        addRow("Opening balances", opening.effectiveDate || opening.effective_date, "",
+          financeAccount(account), "Opening balance", account, "", amount(balance), "", "", "");
+      });
+    }
+    readArray(STORAGE_KEYS.cashClosings).forEach(record => {
+      addRow("Cash closing", financeDate(record), "", "Cash on Hand", "Reconciliation", "Cash",
+        "", amount(record.expectedCash ?? record.expected_cash), "",
+        amount(record.difference), `Actual count: ${peso.format(amount(record.actualCash ?? record.actual_cash))}. ${record.notes || ""}`);
+    });
+    readArray(STORAGE_KEYS.gcashClosings).forEach(record => {
+      addRow("GCash reconciliation", financeDate(record), "", "GCash", "Reconciliation", "GCash",
+        "", amount(record.expectedGcash ?? record.expectedBalance ?? record.expected_gcash ?? record.expected_balance),
+        "", amount(record.difference),
+        `Actual balance: ${peso.format(amount(record.actualGcash ?? record.actualBalance ?? record.actual_gcash ?? record.actual_balance))}. ${record.notes || ""}`);
+    });
+    ["cash", "gcash", "revolving", "savings"].forEach(account => {
+      addRow("Current fund balances", today, "", financeAccount(account), "Current balance", account,
+        "", calculateFundBalance(account, today), "", "", "");
+    });
+    readCustomers().filter(customer => customer.balance > 0).forEach(customer => {
+      addRow("Accounts receivable", today, customer.id, customer.name, "Outstanding balance",
+        "Credit", "", "", "", customer.balance, "");
+    });
+    readProducts().forEach(product => {
+      const status = product.stock === null
+        ? "Stock not set"
+        : product.stock === 0 || (product.minimum !== null && product.stock <= product.minimum * 0.25)
+          ? "Critical"
+          : product.minimum !== null && product.stock <= product.minimum
+            ? "Reorder soon"
+            : product.minimum === null ? "Minimum not set" : "Good";
+      addRow("Inventory", today, product.id, product.name, "Stock", product.unit,
+        product.stock === null ? "" : product.stock, product.stock === null ? "" : product.stock * product.cost,
+        "", status, `Minimum: ${product.minimum === null ? "not set" : product.minimum}`);
+    });
+    return rows;
+  }
+
+  function downloadReportFile(content, type, filename) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportReportsCsv() {
+    try {
+      const csv = getReportExportRows()
+        .map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(","))
+        .join("\r\n");
+      downloadReportFile(`\uFEFF${csv}`, "text/csv;charset=utf-8", `rlstoreos-reports-${today}.csv`);
+    } catch (error) {
+      elements.reportError.textContent = `Reports could not be exported: ${error instanceof Error ? error.message : "Unexpected data error."}`;
+      elements.reportError.hidden = false;
+    }
+  }
+
+  function exportReportsExcel() {
+    try {
+      const escapeXml = value => String(value).replace(/[<>&'"]/g, character => ({
+        "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", "\"": "&quot;"
+      })[character]);
+      const rows = getReportExportRows().map(row => `<Row>${row.map(value => {
+        const numeric = typeof value === "number" && Number.isFinite(value);
+        return `<Cell><Data ss:Type="${numeric ? "Number" : "String"}">${escapeXml(value)}</Data></Cell>`;
+      }).join("")}</Row>`).join("");
+      const workbook = `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<?mso-application progid="Excel.Sheet"?>` +
+        `<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" ` +
+        `xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">` +
+        `<Worksheet ss:Name="RL StoreOS Reports"><Table>${rows}</Table></Worksheet></Workbook>`;
+      downloadReportFile(workbook, "application/vnd.ms-excel;charset=utf-8", `rlstoreos-reports-${today}.xml`);
+    } catch (error) {
+      elements.reportError.textContent = `Excel report could not be exported: ${error instanceof Error ? error.message : "Unexpected data error."}`;
+      elements.reportError.hidden = false;
+    }
+  }
+
   function openExpenseDialog() {
     elements.expenseForm.reset();
     elements.expenseFormError.hidden = true;
@@ -1605,8 +2689,17 @@
         paymentSource: formData.get("paymentSource"),
         createdAt: new Date().toISOString()
       });
+      if (!cloudMode && ["Cash", "GCash"].includes(expense.paymentSource)) {
+        validateFundMovement({
+          date: expense.date,
+          type: "expense",
+          fromAccount: expense.paymentSource === "Cash" ? "cash" : "gcash",
+          toAccount: "",
+          amount: expense.amount
+        });
+      }
       if (cloudMode) {
-        const savedExpense = await cloud.saveExpense(expense);
+        const savedExpense = await cloud.saveExpense(expense, financeEnabled);
         cloudSaved = true;
         cacheCloudRecord(STORAGE_KEYS.expenses, savedExpense);
         elements.expenseDialog.close();
@@ -1930,6 +3023,15 @@
         });
         cacheCloudRecord(STORAGE_KEYS.saleVoids, record);
       } else {
+        if (preview.refundAmount > 0 && ["Cash", "GCash"].includes(refundMethod)) {
+          validateFundMovement({
+            date: today,
+            type: "sale_void_refund",
+            fromAccount: refundMethod === "Cash" ? "cash" : "gcash",
+            toAccount: "",
+            amount: preview.refundAmount
+          });
+        }
         record = localSaleVoidRecord(saleVoidSale, selection, preview, reason, refundMethod);
       }
       elements.saleVoidDialog.close();
@@ -2217,6 +3319,7 @@
     const customers = view === "customers";
     const expenses = view === "expenses";
     const reports = view === "reports";
+    const finance = view === "finance";
     document.querySelectorAll(".nav-link[data-view]").forEach(link => {
       const active = dashboard ? link.dataset.view === "dashboard" : link.dataset.view === view;
       link.classList.toggle("is-active", active);
@@ -2235,8 +3338,10 @@
     elements.expensesView.classList.toggle("is-visible", expenses);
     elements.reportsView.hidden = !reports;
     elements.reportsView.classList.toggle("is-visible", reports);
-    elements.placeholderView.hidden = dashboard || pos || inventory || customers || expenses || reports;
-    elements.placeholderView.classList.toggle("is-visible", !dashboard && !pos && !inventory && !customers && !expenses && !reports);
+    elements.financeView.hidden = !finance;
+    elements.financeView.classList.toggle("is-visible", finance);
+    elements.placeholderView.hidden = dashboard || pos || inventory || customers || expenses || reports || finance;
+    elements.placeholderView.classList.toggle("is-visible", !dashboard && !pos && !inventory && !customers && !expenses && !reports && !finance);
     if (dashboard) {
       setText("page-title", "Dashboard");
       document.title = "Dashboard | RL StoreOS";
@@ -2261,6 +3366,10 @@
       setText("page-title", NAV_LABELS[view]);
       document.title = `${NAV_LABELS[view]} | RL StoreOS`;
       renderReports();
+    } else if (finance) {
+      setText("page-title", NAV_LABELS[view]);
+      document.title = `${NAV_LABELS[view]} | RL StoreOS`;
+      renderFinance();
     } else {
       setText("page-title", NAV_LABELS[view]);
       setText("placeholder-title", NAV_LABELS[view]);
@@ -2309,7 +3418,10 @@
     [
       "data-error", "sales-today", "sales-count", "gross-profit", "expenses-today", "net-profit",
       "inventory-value", "cash-on-hand", "credit-sales", "receivables", "opening-cash",
-      "cash-sales", "cash-collections", "cash-expenses", "cash-refunds", "expected-cash", "sales-table-body", "sales-empty",
+      "cash-sales", "cash-collections", "cash-expenses", "cash-refunds", "cash-stock-purchases",
+      "cash-other-in", "cash-other-out", "cash-drops", "expected-cash", "gcash-balance",
+      "revolving-balance", "savings-balance", "today-collections", "today-cash-difference",
+      "sales-table-body", "sales-empty",
       "top-products", "products-empty", "low-stock-list", "low-stock-count", "stock-empty",
       "dashboard", "placeholder", "menu-toggle", "sidebar-scrim", "page-title",
       "placeholder-title", "placeholder-message", "placeholder-symbol"
@@ -2323,6 +3435,7 @@
     elements.customersView = document.getElementById("view-customers");
     elements.expensesView = document.getElementById("view-expenses");
     elements.reportsView = document.getElementById("view-reports");
+    elements.financeView = document.getElementById("view-finance");
     elements.placeholderView = document.getElementById("view-placeholder");
     elements.salesTableBody = document.getElementById("sales-table-body");
     elements.salesEmpty = document.getElementById("sales-empty");
@@ -2408,6 +3521,42 @@
     elements.completedCustomerRow = document.getElementById("completed-customer-row");
     elements.completedCashRow = document.getElementById("completed-cash-row");
     elements.completedChangeRow = document.getElementById("completed-change-row");
+    elements.financeError = document.getElementById("finance-error");
+    elements.financeMigrationNotice = document.getElementById("finance-migration-notice");
+    elements.cashClosingDate = document.getElementById("cash-closing-date");
+    elements.cashClosingForm = document.getElementById("cash-closing-form");
+    elements.cashClosingBreakdown = document.getElementById("cash-closing-breakdown");
+    elements.cashClosingHistoryBody = document.getElementById("cash-closing-history-body");
+    elements.cashClosingHistoryEmpty = document.getElementById("cash-closing-history-empty");
+    elements.gcashClosingDate = document.getElementById("gcash-closing-date");
+    elements.gcashClosingForm = document.getElementById("gcash-closing-form");
+    elements.gcashClosingError = document.getElementById("gcash-closing-error");
+    elements.gcashClosingHistoryBody = document.getElementById("gcash-closing-history-body");
+    elements.gcashClosingHistoryEmpty = document.getElementById("gcash-closing-history-empty");
+    elements.fundTransactionsBody = document.getElementById("fund-transactions-body");
+    elements.fundTransactionsEmpty = document.getElementById("fund-transactions-empty");
+    elements.stockPurchasesBody = document.getElementById("stock-purchases-body");
+    elements.stockPurchasesEmpty = document.getElementById("stock-purchases-empty");
+    elements.fundOpeningHistoryBody = document.getElementById("fund-opening-history-body");
+    elements.fundOpeningHistoryEmpty = document.getElementById("fund-opening-history-empty");
+    elements.fundOpeningDialog = document.getElementById("fund-opening-dialog");
+    elements.fundOpeningForm = document.getElementById("fund-opening-form");
+    elements.fundOpeningError = document.getElementById("fund-opening-error");
+    elements.fundTransactionDialog = document.getElementById("fund-transaction-dialog");
+    elements.fundTransactionForm = document.getElementById("fund-transaction-form");
+    elements.fundTransactionError = document.getElementById("fund-transaction-error");
+    elements.fundTransactionType = document.getElementById("fund-transaction-type");
+    elements.fundFromField = document.getElementById("fund-from-field");
+    elements.fundToField = document.getElementById("fund-to-field");
+    elements.stockPurchaseDialog = document.getElementById("stock-purchase-dialog");
+    elements.stockPurchaseForm = document.getElementById("stock-purchase-form");
+    elements.stockPurchaseError = document.getElementById("stock-purchase-error");
+    elements.purchaseProduct = document.getElementById("purchase-product");
+    elements.purchaseQuantity = document.getElementById("purchase-quantity");
+    elements.purchaseUnitCost = document.getElementById("purchase-unit-cost");
+    elements.purchaseDraftBody = document.getElementById("purchase-draft-body");
+    elements.purchaseDraftEmpty = document.getElementById("purchase-draft-empty");
+    elements.financeCashClosingExpected = document.getElementById("cash-closing-expected");
     elements.cloudAuthForm = document.getElementById("cloud-auth-form");
     elements.cloudAuthScreen = document.getElementById("cloud-auth-screen");
     elements.cloudAuthError = document.getElementById("cloud-auth-error");
@@ -2455,6 +3604,34 @@
     document.getElementById("close-expense-dialog").addEventListener("click", () => elements.expenseDialog.close());
     document.getElementById("cancel-expense-button").addEventListener("click", () => elements.expenseDialog.close());
     elements.expenseForm.addEventListener("submit", saveExpenseFromForm);
+    document.getElementById("set-fund-opening-button").addEventListener("click", openFundOpeningDialog);
+    document.getElementById("close-fund-opening-dialog").addEventListener("click", () => elements.fundOpeningDialog.close());
+    document.getElementById("cancel-fund-opening-button").addEventListener("click", () => elements.fundOpeningDialog.close());
+    elements.fundOpeningForm.addEventListener("submit", saveFundOpening);
+    document.getElementById("cash-in-button").addEventListener("click", () => openFundTransactionDialog("other_in"));
+    document.getElementById("cash-out-button").addEventListener("click", () => openFundTransactionDialog("other_out"));
+    document.getElementById("cash-drop-button").addEventListener("click", () => openFundTransactionDialog("cash_drop"));
+    document.getElementById("gcash-in-button").addEventListener("click", () => openFundTransactionDialog("gcash_in"));
+    document.getElementById("gcash-out-button").addEventListener("click", () => openFundTransactionDialog("gcash_out"));
+    document.getElementById("fund-transfer-button").addEventListener("click", () => openFundTransactionDialog("transfer"));
+    document.getElementById("close-fund-transaction-dialog").addEventListener("click", () => elements.fundTransactionDialog.close());
+    document.getElementById("cancel-fund-transaction-button").addEventListener("click", () => elements.fundTransactionDialog.close());
+    elements.fundTransactionForm.addEventListener("submit", saveFundTransaction);
+    elements.fundTransactionType.addEventListener("change", updateFundTransactionFields);
+    document.getElementById("stock-purchase-button").addEventListener("click", openStockPurchaseDialog);
+    document.getElementById("close-stock-purchase-dialog").addEventListener("click", () => elements.stockPurchaseDialog.close());
+    document.getElementById("cancel-stock-purchase-button").addEventListener("click", () => elements.stockPurchaseDialog.close());
+    document.getElementById("add-purchase-item-button").addEventListener("click", addStockPurchaseItem);
+    elements.stockPurchaseForm.addEventListener("submit", saveStockPurchase);
+    elements.cashClosingForm.addEventListener("submit", saveCashClosing);
+    elements.cashClosingDate.addEventListener("change", renderCashClosingPreview);
+    elements.cashClosingForm.elements.namedItem("actualCash").addEventListener("input", renderCashClosingPreview);
+    elements.gcashClosingForm.addEventListener("submit", saveGcashClosing);
+    elements.gcashClosingDate.addEventListener("change", renderGcashClosingPreview);
+    elements.gcashClosingForm.elements.namedItem("actualGcash").addEventListener("input", renderGcashClosingPreview);
+    document.getElementById("export-finance-button").addEventListener("click", exportFinanceCsv);
+    document.getElementById("export-reports-csv").addEventListener("click", exportReportsCsv);
+    document.getElementById("export-reports-excel").addEventListener("click", exportReportsExcel);
     elements.reportDay.value = today;
     elements.reportMonth.value = today.slice(0, 7);
     elements.reportDay.addEventListener("change", renderReports);
@@ -2506,6 +3683,7 @@
       renderCustomers();
       renderExpenses();
       renderReports();
+      renderFinance();
       renderCatalog(elements.productSearch.value);
     });
     if (cloudMode) {
